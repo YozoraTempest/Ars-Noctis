@@ -1,0 +1,18 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local runtimes and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+
+# Generated validation output
+coverage/
+dist/
+tmp/
