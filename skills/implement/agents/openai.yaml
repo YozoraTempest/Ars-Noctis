@@ -1,0 +1,7 @@
+interface:
+  display_name: "Implement"
+  short_description: "按任务逐项实施工程修改、记录进度并创建本地检查点提交"
+  default_prompt: "使用 $implement 执行当前任务，维护轻量实施记录并按任务提交。"
+
+policy:
+  allow_implicit_invocation: false
