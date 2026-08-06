@@ -1,0 +1,8 @@
+version: 1
+kind: support
+id: browser-control
+contract: 1
+summary: 在当前阶段已有授权范围内控制浏览器并收集可观察结果。
+activation:
+  - on-request
+side_effect_authority: false

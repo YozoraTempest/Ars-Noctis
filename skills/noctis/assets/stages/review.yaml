@@ -1,0 +1,24 @@
+version: 1
+kind: stage
+id: review
+contract: 1
+summary: 对任务登记的精确提交执行一次静态代码审查和定向修复复核。
+entry:
+  status: active
+  stage: review
+outcomes:
+  - advanced
+  - waiting
+  - fix
+  - deferred
+  - blocked
+allows:
+  - review-record-write
+  - task-record-write
+  - local-checkpoint
+forbids:
+  - project-write
+  - test-execution
+  - behavior-verification
+  - push
+  - deploy

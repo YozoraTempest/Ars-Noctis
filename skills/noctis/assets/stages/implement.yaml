@@ -1,0 +1,22 @@
+version: 1
+kind: stage
+id: implement
+contract: 1
+summary: 实现已确认的任务范围并登记本地业务提交。
+entry:
+  status: active
+  stage: implement
+outcomes:
+  - advanced
+  - deferred
+  - blocked
+allows:
+  - project-write
+  - local-commit
+  - task-record-write
+forbids:
+  - code-review
+  - test-execution
+  - behavior-verification
+  - push
+  - deploy

@@ -1,0 +1,42 @@
+version: 1
+default_preset: "reviewed"
+executors:
+  code-review:
+    provider: "code-review"
+    source: "manifest"
+  implement:
+    provider: "implement"
+    source: "manifest"
+  verify:
+    provider: "verify"
+    source: "manifest"
+supports: {}
+stages:
+  fix:
+    contract: 1
+    executor: "implement"
+    supports: {}
+  implement:
+    contract: 1
+    executor: "implement"
+    supports: {}
+  review:
+    contract: 1
+    executor: "code-review"
+    supports: {}
+  verify:
+    contract: 1
+    executor: "verify"
+    supports: {}
+presets:
+  reviewed:
+    description: "默认工程修改"
+    workflow:
+      - "implement"
+      - "review"
+  verified:
+    description: "包含实际行为验收"
+    workflow:
+      - "implement"
+      - "review"
+      - "verify"
