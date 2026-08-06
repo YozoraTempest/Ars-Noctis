@@ -1,6 +1,6 @@
 version: 1
 role: executor
-handles:
+capabilities:
   - id: verify
     contract: 1
 documents:

@@ -1,7 +1,7 @@
 interface:
   display_name: "Code Review"
-  short_description: "审查任务登记的精确提交，并对集中修复执行一次定向复核"
-  default_prompt: "使用 $code-review 静态审查当前任务登记的精确提交并记录可达问题。"
+  short_description: "审查 Task 的精确提交，并以新 Task 定向复核集中修复"
+  default_prompt: "使用 $code-review 静态审查当前 Task 登记的精确提交并记录可达问题。"
 
 policy:
   allow_implicit_invocation: false

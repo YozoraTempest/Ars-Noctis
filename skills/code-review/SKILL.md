@@ -1,25 +1,25 @@
 ---
 name: code-review
-description: 对任务登记的精确提交执行一次静态代码审查，记录可达且有证据的 P0-P2 finding，并在集中修复后做一次定向复核。用于显式代码审查或 Noctis 的 review stage；不修改业务代码、不运行测试，也不执行实际行为验收。
+description: 对 Task 登记的精确提交执行静态代码审查，记录可达且有证据的 P0-P2 finding，并在集中修复后通过新的 Review Task 做一次定向复核。用于显式代码审查或 Noctis Exec 中 capability 为 review 的 active Task；不修改业务代码、不运行测试，也不执行实际行为验收。
 ---
 
 # Code Review
 
 只审查代码。不要修复、运行测试、构建应用或把代码阅读描述成行为验证。
 
-## 阶段与范围
+## 确定范围
 
-由 Noctis 调度时，先用已加载的 task 工具 inspect。仅在 `status: active, stage: review` 时继续；否则返回 `deferred`，不创建记录或迁移状态。独立调用时按用户给出的提交、差异或任务范围审查，不注入其他阶段。
+由 Noctis Exec 调度时，用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `review` 时继续；否则返回 deferred。独立调用时按用户给出的提交、差异或范围审查，不注入其他 Task。
 
-用已加载的 task、implementation 和 scenarios 文档工具读取：
+通过已加载的结构化工具读取：
 
-- `tasks.md` 中对应目标、Step 和预期结果；
-- `implementation.md` 登记的仓库与精确业务提交；
-- `scenarios.md` 的预期行为，仅作为契约证据，不当作已验证结果。
+- Unit `noctis.md` 中当前 Review Task 的依赖、目标和预期结果；
+- 对应 Track 的 `implementation.md` 所登记的精确业务提交；
+- Unit `scenarios.md` 的预期行为，仅作为契约证据，不当作已验证结果。
 
-不要直接编辑或通篇解析这些结构化 Markdown。排除 Noctis `docs:` 检查点。提交缺失、不可解析或记录范围不一致时阻塞，不得擅自扩大到整个分支或工作树。
+不要直接编辑或通篇解析这些 Markdown。排除 Noctis docs: 检查点。提交缺失、不可解析或记录范围不一致时阻塞，不得擅自扩大到整个分支或工作树。
 
-Subtask 完成后审查一次该 Subtask；所有 Subtask 完成后，父 Task 再做一次集成审查。父审查只关注需求完整性、跨仓库契约、数据流、依赖顺序和组合冲突，不重复局部检查。
+每个项目 Track 可在 Implement 后安排局部 Review Task。所有局部分支完成后，再安排一个依赖它们的集成 Review Task，只检查需求完整性、跨仓库契约、数据流、发布顺序和组合冲突，不重复局部检查。
 
 ## 执行静态审查
 
@@ -31,20 +31,20 @@ Subtask 完成后审查一次该 Subtask；所有 Subtask 完成后，父 Task �
 - 从代码、调用方、规则或场景可证明触发路径可达；
 - 能说明实际后果、精确位置和最小修复方向。
 
-忽略纯风格、无证据的未来风险、契约外输入、可选重构、机械工具问题和“更保险”的防御性建议。只使用：`P0` 安全/不可逆数据/核心可用性；`P1` 主要业务、权限、公开契约或跨 Subtask 错误；`P2` 受支持且可达的局部边界错误。
+忽略纯风格、无证据的未来风险、契约外输入、可选重构、机械工具问题和“更保险”的防御性建议。只使用：P0 安全/不可逆数据/核心可用性；P1 主要业务、权限、公开契约或跨 Track 错误；P2 受支持且可达的局部边界错误。
 
 ## 维护审查记录
 
-使用 `scripts/review.py` 管理唯一 `review.md`，不要直接编辑。用 `create/read/update/append` 和 revision 写入；每个 finding 使用稳定 ID，至少记录 priority、location、scenario、evidence、impact、minimal fix、decision 和 resolution。
+使用 `scripts/review.py` 管理 Task `record.path` 指向的 `review.md`，不要直接编辑。每个 finding 使用稳定 ID，记录 priority、location、scenario、evidence、impact、minimal fix、decision 和 resolution。
 
-无 finding 时只记录“未发现代码级问题”，不得声称测试或行为验证通过，然后按任务快照进入下一 stage 或完成。
+无 finding 时记录“未发现代码级问题”，不得声称测试或行为验证通过，然后完成当前 Review Task。
 
-有 finding 时一次性展示完整清单，由用户批量决定 accepted/rejected。Review 只记录决定；存在 accepted 时由 Noctis 转到 `fix` 并保存恢复队列，全部 rejected 时继续正常 workflow。不得自行修复或逐条触发循环。
+有 finding 时一次性展示完整清单，由用户批量决定 accepted/rejected。存在 accepted 时，使用 Noctis Exec `orchestration splice` 原子完成当前 Review Task，并插入 Fix 与一次新 Review Task；原有 pending 后继改为依赖新 Review。全部 rejected 时直接完成当前 Task。Review 不自行修复。
 
-## 修复复核
+## 定向复核
 
-Fix 返回 review 后只复核已接受 finding 对应的新 fix diff，并检查该 diff 直接造成的回归。不要重扫旧代码或提出无关问题。
+修复后的新 Review Task 只复核已接受 finding 对应的 Fix diff，并检查该 diff 直接造成的回归。不要重扫旧代码或提出无关问题。
 
-全部解决时标为 resolved，并让 Noctis 使用恢复队列继续。仍未解决或产生直接回归时记录证据并阻塞；一次修复后只复核一次，不自动开启第二轮 fix/review。需要继续处理时交由用户决定。
+全部解决时标为 resolved 并完成 Task。仍未解决或产生直接回归时记录证据并阻塞；一次修复后只复核一次，不自动插入第二轮 Fix/Review，需要继续处理时交由用户决定。
 
-审查记录的本地检查点使用 `docs:` 和 `Noctis-Task` trailer。未经明确授权不修改业务代码、不测试、不验证、不推送、不部署。
+审查记录的本地检查点使用 `docs:` 和 `Noctis-Task: <task-id>` trailer。未经明确授权不修改业务代码、不测试、不验证、不推送、不部署。

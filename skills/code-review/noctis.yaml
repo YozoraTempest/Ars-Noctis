@@ -1,6 +1,6 @@
 version: 1
 role: executor
-handles:
+capabilities:
   - id: review
     contract: 1
 documents:

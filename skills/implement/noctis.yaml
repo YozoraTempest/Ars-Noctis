@@ -1,6 +1,6 @@
 version: 1
 role: executor
-handles:
+capabilities:
   - id: implement
     contract: 1
   - id: fix

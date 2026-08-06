@@ -25,7 +25,7 @@ class RecordError(ValueError):
 
 def task_directory(value: Path) -> Path:
     path = value.resolve()
-    return path.parent if path.name == "tasks.md" else path
+    return path.parent if path.name == "noctis.md" else path
 
 
 def document_path(value: Path) -> Path:
