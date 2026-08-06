@@ -113,6 +113,14 @@ class ToolchainTests(unittest.TestCase):
                     "objective": "完成示例实现。",
                     "workflowSnapshot": {
                         "stages": {
+                            "fix": {
+                                "contract": 1,
+                                "executor": {
+                                    "id": "implement",
+                                    "provider": "implement",
+                                },
+                                "supports": {},
+                            },
                             "implement": {
                                 "contract": 1,
                                 "executor": {"id": "implement", "provider": "implement"},
@@ -124,7 +132,13 @@ class ToolchainTests(unittest.TestCase):
                                     "id": "code-review",
                                     "provider": "code-review",
                                 },
-                                "supports": {},
+                                "supports": {
+                                    "stage-knowledge": {
+                                        "contract": 1,
+                                        "provider": "codebase-design",
+                                        "activation": "before",
+                                    }
+                                },
                             },
                         }
                     },
@@ -149,8 +163,47 @@ class ToolchainTests(unittest.TestCase):
             metadata = json.loads(inspected.stdout)["metadata"]
             self.assertEqual(metadata["workflow"], ["implement", "review"])
             self.assertEqual(metadata["stage"], "implement")
+            self.assertEqual(
+                metadata["workflow_snapshot"]["stages"]["review"]["executor"]["provider"],
+                "code-review",
+            )
+            self.assertEqual(
+                metadata["workflow_snapshot"]["stages"]["review"]["supports"]
+                ["stage-knowledge"]["activation"],
+                "before",
+            )
 
-            transitioned = self.run_tool(
+            appended = self.run_tool(
+                "task",
+                "append",
+                "--task",
+                str(task),
+                "--section",
+                "steps",
+                "--item",
+                "S01",
+                "--expected-revision",
+                "1",
+                input_text=json.dumps({"content": "- [ ] Implement change"}),
+            )
+            self.assertEqual(json.loads(appended.stdout)["revision"], 2)
+
+            checked = self.run_tool(
+                "task",
+                "update",
+                "--task",
+                str(task),
+                "--section",
+                "item.content",
+                "--item",
+                "S01",
+                "--expected-revision",
+                "2",
+                input_text=json.dumps({"content": "- [x] Implement change"}),
+            )
+            self.assertEqual(json.loads(checked.stdout)["revision"], 3)
+
+            skipped = self.run_tool(
                 "task",
                 "transition",
                 "--task",
@@ -160,9 +213,95 @@ class ToolchainTests(unittest.TestCase):
                 "--to-stage",
                 "review",
                 "--expected-revision",
+                "3",
+            )
+            self.assertEqual(json.loads(skipped.stdout)["stage"], "review")
+
+            returned = self.run_tool(
+                "task",
+                "transition",
+                "--task",
+                str(task),
+                "--from-stage",
+                "review",
+                "--to-status",
+                "completed",
+                "--expected-revision",
+                "4",
+            )
+            self.assertEqual(json.loads(returned.stdout)["status"], "completed")
+
+    def test_fix_resume_queue_cannot_escape_snapshot_or_skip_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task = root / "Noctis" / "accounts" / "tasks" / "20260806-recovery"
+            payload = json.dumps(
+                {
+                    "title": "恢复任务",
+                    "objective": "验证恢复队列。",
+                    "workflowSnapshot": {
+                        "stages": {
+                            stage: {
+                                "contract": 1,
+                                "executor": {
+                                    "id": "implement" if stage == "fix" else stage,
+                                    "provider": "implement" if stage == "fix" else stage,
+                                },
+                                "supports": {},
+                            }
+                            for stage in ("implement", "fix", "review", "verify")
+                        }
+                    },
+                },
+                ensure_ascii=False,
+            )
+            self.run_tool(
+                "task",
+                "create",
+                "--task",
+                str(task),
+                "--stage",
+                "implement",
+                "--workflow",
+                "implement",
+                "review",
+                "verify",
+                input_text=payload,
+            )
+
+            transitioned = self.run_tool(
+                "task",
+                "transition",
+                "--task",
+                str(task),
+                "--from-stage",
+                "implement",
+                "--to-stage",
+                "fix",
+                "--resume",
+                "review",
+                "verify",
+                "--expected-revision",
                 "1",
             )
-            self.assertEqual(json.loads(transitioned.stdout)["revision"], 2)
+            transition_result = json.loads(transitioned.stdout)
+            self.assertEqual(transition_result["revision"], 2)
+            self.assertEqual(transition_result["resume"], ["review", "verify"])
+
+            resumed = self.run_tool(
+                "task",
+                "transition",
+                "--task",
+                str(task),
+                "--from-stage",
+                "fix",
+                "--use-resume",
+                "--expected-revision",
+                "2",
+            )
+            resume_result = json.loads(resumed.stdout)
+            self.assertEqual(resume_result["stage"], "review")
+            self.assertEqual(resume_result["resume"], ["verify"])
 
             scanned = self.run_tool("task", "scan", "--root", str(root))
             scan_result = json.loads(scanned.stdout)
@@ -170,7 +309,7 @@ class ToolchainTests(unittest.TestCase):
             self.assertEqual(len(tasks), 1, scan_result)
             self.assertEqual(tasks[0]["stage"], "review")
 
-            stale = self.run_tool(
+            bypassed = self.run_tool(
                 "task",
                 "transition",
                 "--task",
@@ -180,7 +319,35 @@ class ToolchainTests(unittest.TestCase):
                 "--to-stage",
                 "verify",
                 "--expected-revision",
-                "1",
+                "3",
+                ok=False,
+            )
+            self.assertIn("recovery queue", bypassed.stderr)
+
+            resumed_again = self.run_tool(
+                "task",
+                "transition",
+                "--task",
+                str(task),
+                "--from-stage",
+                "review",
+                "--use-resume",
+                "--expected-revision",
+                "3",
+            )
+            self.assertEqual(json.loads(resumed_again.stdout)["stage"], "verify")
+
+            stale = self.run_tool(
+                "task",
+                "transition",
+                "--task",
+                str(task),
+                "--from-stage",
+                "verify",
+                "--to-status",
+                "completed",
+                "--expected-revision",
+                "3",
                 ok=False,
             )
             self.assertIn("revision mismatch", stale.stderr)

@@ -1,0 +1,11 @@
+version: 1
+role: executor
+handles:
+  - id: review
+    contract: 1
+documents:
+  - id: review
+    contract: 1
+    file: review.md
+    template: assets/templates/review.md
+    tool: scripts/review.py

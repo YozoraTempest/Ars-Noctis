@@ -15,6 +15,7 @@ from typing import Any, Iterator
 
 
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+ITEM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 EXTENSION_ID = re.compile(
     r"^[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$"
 )
@@ -58,6 +59,11 @@ def _parse_scalar(value: str) -> Any:
         return None
     if re.fullmatch(r"-?\d+", value):
         return int(value)
+    if value.startswith(("{", "[")):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as error:
+            raise NoctisError(f"invalid inline collection: {value}") from error
     return value
 
 
@@ -74,34 +80,66 @@ def _frontmatter(text: str) -> tuple[list[str], str]:
     raise NoctisError("document frontmatter is not terminated")
 
 
-def _top_level_metadata(lines: list[str]) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    index = 0
+def _line_indent(line: str) -> int:
+    if "\t" in line[: len(line) - len(line.lstrip())]:
+        raise NoctisError("frontmatter indentation must use spaces")
+    return len(line) - len(line.lstrip(" "))
+
+
+def _parse_block(
+    lines: list[str], index: int, indent: int
+) -> tuple[dict[str, Any] | list[Any], int]:
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index >= len(lines) or _line_indent(lines[index]) < indent:
+        raise NoctisError("frontmatter contains an empty nested value")
+    is_list = lines[index][indent:].startswith("-")
+    result: dict[str, Any] | list[Any] = [] if is_list else {}
+
     while index < len(lines):
         line = lines[index]
-        if not line or line.startswith((" ", "\t")) or ":" not in line:
+        if not line.strip():
             index += 1
             continue
-        key, raw_value = line.split(":", 1)
+        current_indent = _line_indent(line)
+        if current_indent < indent:
+            break
+        if current_indent > indent:
+            raise NoctisError("frontmatter contains unexpected indentation")
+        value = line[indent:]
+
+        if is_list:
+            if not isinstance(result, list) or not value.startswith("-"):
+                raise NoctisError("frontmatter mixes list and mapping entries")
+            raw = value[1:].strip()
+            if raw:
+                result.append(_parse_scalar(raw))
+                index += 1
+            else:
+                child, index = _parse_block(lines, index + 1, indent + 2)
+                result.append(child)
+            continue
+
+        if not isinstance(result, dict) or value.startswith("-") or ":" not in value:
+            raise NoctisError("frontmatter mixes mapping and list entries")
+        key, raw = value.split(":", 1)
         key = key.strip()
-        raw_value = raw_value.strip()
-        if raw_value:
-            metadata[key] = _parse_scalar(raw_value)
+        if not key or key in result:
+            raise NoctisError(f"frontmatter contains invalid or duplicate key: {key}")
+        raw = raw.strip()
+        if raw:
+            result[key] = _parse_scalar(raw)
             index += 1
-            continue
-        values: list[Any] = []
-        cursor = index + 1
-        while cursor < len(lines):
-            nested = lines[cursor]
-            if nested and not nested.startswith((" ", "\t")):
-                break
-            match = re.fullmatch(r"  -\s+(.+)", nested)
-            if match:
-                values.append(_parse_scalar(match.group(1)))
-            cursor += 1
-        if values:
-            metadata[key] = values
-        index = cursor
+        else:
+            child, index = _parse_block(lines, index + 1, indent + 2)
+            result[key] = child
+    return result, index
+
+
+def _top_level_metadata(lines: list[str]) -> dict[str, Any]:
+    metadata, index = _parse_block(lines, 0, 0)
+    if index != len(lines) or not isinstance(metadata, dict):
+        raise NoctisError("frontmatter root must be a mapping")
     return metadata
 
 
@@ -182,6 +220,83 @@ def _validate_task(metadata: dict[str, Any]) -> None:
         raise NoctisError("task workflow must be a non-empty list")
     if any(not isinstance(item, str) or not IDENTIFIER.fullmatch(item) for item in workflow):
         raise NoctisError("task workflow contains an invalid stage id")
+    if len(workflow) != len(set(workflow)):
+        raise NoctisError("task workflow contains duplicate stages")
+    if "fix" in workflow:
+        raise NoctisError("fix is a recovery stage and cannot appear in task workflow")
+    snapshot = metadata.get("workflow_snapshot")
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("stages"), dict):
+        raise NoctisError("task workflow_snapshot must contain a stages mapping")
+    snapshot_stages = snapshot["stages"]
+    missing = [item for item in workflow if item not in snapshot_stages]
+    if missing:
+        raise NoctisError(
+            "task workflow_snapshot is missing stages: " + ", ".join(missing)
+        )
+    for stage_id, stage_spec in snapshot_stages.items():
+        if not isinstance(stage_id, str) or not IDENTIFIER.fullmatch(stage_id):
+            raise NoctisError("task workflow_snapshot contains an invalid stage id")
+        if not isinstance(stage_spec, dict):
+            raise NoctisError(f"snapshot stage '{stage_id}' must be a mapping")
+        contract = stage_spec.get("contract")
+        executor = stage_spec.get("executor")
+        supports = stage_spec.get("supports")
+        if isinstance(contract, bool) or not isinstance(contract, int) or contract < 1:
+            raise NoctisError(f"snapshot stage '{stage_id}' has an invalid contract")
+        if not isinstance(executor, dict) or any(
+            not isinstance(executor.get(key), str)
+            or not IDENTIFIER.fullmatch(executor[key])
+            for key in ("id", "provider")
+        ):
+            raise NoctisError(f"snapshot stage '{stage_id}' has an invalid executor")
+        if not isinstance(supports, dict):
+            raise NoctisError(f"snapshot stage '{stage_id}' supports must be a mapping")
+        for support_id, support_spec in supports.items():
+            if not isinstance(support_id, str) or not IDENTIFIER.fullmatch(support_id):
+                raise NoctisError(
+                    f"snapshot stage '{stage_id}' contains an invalid support id"
+                )
+            if not isinstance(support_spec, dict):
+                raise NoctisError(
+                    f"snapshot support '{support_id}' must be a mapping"
+                )
+            support_contract = support_spec.get("contract")
+            provider = support_spec.get("provider")
+            activation = support_spec.get("activation")
+            if (
+                isinstance(support_contract, bool)
+                or not isinstance(support_contract, int)
+                or support_contract < 1
+            ):
+                raise NoctisError(
+                    f"snapshot support '{support_id}' has an invalid contract"
+                )
+            if not isinstance(provider, str) or not IDENTIFIER.fullmatch(provider):
+                raise NoctisError(
+                    f"snapshot support '{support_id}' has an invalid provider"
+                )
+            if activation not in ("before", "on-request"):
+                raise NoctisError(
+                    f"snapshot support '{support_id}' has an invalid activation"
+                )
+    if status != "completed" and stage not in snapshot_stages:
+        raise NoctisError(f"task stage '{stage}' is missing from workflow_snapshot")
+    resume = metadata.get("resume")
+    if resume is not None and (
+        not isinstance(resume, list)
+        or not resume
+        or any(
+            not isinstance(item, str) or not IDENTIFIER.fullmatch(item)
+            for item in resume
+        )
+    ):
+        raise NoctisError("task resume must be a non-empty list of stage ids")
+    if isinstance(resume, list) and any(item not in workflow for item in resume):
+        raise NoctisError("task resume contains a stage outside workflow")
+    if status != "completed" and stage == "fix" and resume is None:
+        raise NoctisError("fix stage must declare resume stages")
+    if status == "completed" and resume is not None:
+        raise NoctisError("completed task must not declare resume stages")
 
 
 def _read_text(path: Path) -> str:
@@ -289,6 +404,10 @@ def create_task(args: argparse.Namespace) -> dict[str, Any]:
     workflow = args.workflow
     if not workflow or any(not IDENTIFIER.fullmatch(item) for item in workflow):
         raise NoctisError("workflow contains an invalid stage id")
+    if len(workflow) != len(set(workflow)):
+        raise NoctisError("workflow contains duplicate stages")
+    if "fix" in workflow:
+        raise NoctisError("fix is a recovery stage and cannot appear in workflow")
     if args.stage not in workflow:
         raise NoctisError("initial stage must be present in workflow")
 
@@ -319,9 +438,89 @@ def inspect_task(args: argparse.Namespace) -> dict[str, Any] | str:
     frontmatter, body = _frontmatter(text)
     metadata = _top_level_metadata(frontmatter)
     _validate_task(metadata)
+    content = body
+    region_start, region_end = 0, len(body)
+    if args.item is not None:
+        matching = [entry for entry in _item_spans(body) if entry[0] == args.item]
+        if len(matching) != 1:
+            raise NoctisError(f"expected exactly one item '{args.item}'")
+        _, region_start, region_end = matching[0]
+        content = body[region_start:region_end]
+    if args.section is not None:
+        spans = _slot_inner_spans(
+            body, f"task.{args.section}", region_start, region_end
+        )
+        if len(spans) != 1:
+            raise NoctisError(f"expected exactly one task section '{args.section}'")
+        content = body[spans[0][0] : spans[0][1]].strip("\n")
     if args.format == "markdown":
-        return text
-    return {"ok": True, "path": str(path), "metadata": metadata, "content": body}
+        return content + ("\n" if content and not content.endswith("\n") else "")
+    return {
+        "ok": True,
+        "path": str(path),
+        "metadata": metadata,
+        "section": args.section,
+        "item": args.item,
+        "content": content,
+    }
+
+
+def mutate_task_record(args: argparse.Namespace) -> dict[str, Any]:
+    path = _task_path(args.task)
+    payload = _load_json(args.input)
+    content = payload.get("content")
+    if not isinstance(content, str):
+        raise NoctisError("input JSON must contain string field 'content'")
+    with _document_lock(path):
+        text = _read_text(path)
+        frontmatter, body = _frontmatter(text)
+        metadata = _top_level_metadata(frontmatter)
+        _validate_task(metadata)
+        if metadata["revision"] != args.expected_revision:
+            raise NoctisError(
+                f"revision mismatch: expected {args.expected_revision}, "
+                f"found {metadata['revision']}"
+            )
+        if args.action == "append":
+            if not ITEM_ID.fullmatch(args.item):
+                raise NoctisError("task item id is invalid")
+            if any(item_id == args.item for item_id, _, _ in _item_spans(body)):
+                raise NoctisError(f"task item already exists: {args.item}")
+            slots = _slot_inner_spans(body, f"task.{args.section}", 0, len(body))
+            if len(slots) != 1:
+                raise NoctisError(
+                    f"expected exactly one task section '{args.section}'"
+                )
+            start, end = slots[0]
+            item = (
+                f"<!-- noctis:item {args.item} -->\n"
+                "<!-- noctis:slot task.item.content -->\n"
+                f"{content.strip()}\n"
+                "<!-- /noctis:slot -->\n"
+                "<!-- noctis:slot task.item.after -->\n"
+                "<!-- /noctis:slot -->\n"
+                "<!-- /noctis:item -->"
+            )
+            body = _insert_at_slot(body, start, end, item)
+        else:
+            matching = [entry for entry in _item_spans(body) if entry[0] == args.item]
+            if len(matching) != 1:
+                raise NoctisError(f"expected exactly one item '{args.item}'")
+            _, item_start, item_end = matching[0]
+            slots = _slot_inner_spans(
+                body, f"task.{args.section}", item_start, item_end
+            )
+            if len(slots) != 1:
+                raise NoctisError(
+                    f"expected exactly one task section '{args.section}' in item '{args.item}'"
+                )
+            start, end = slots[0]
+            replacement = f"\n{content.strip()}\n" if content.strip() else "\n"
+            body = body[:start] + replacement + body[end:]
+        revision = metadata["revision"] + 1
+        frontmatter = _replace_top_level(frontmatter, "revision", revision)
+        _atomic_write(path, _render_document(frontmatter, body))
+    return {"ok": True, "path": str(path), "revision": revision}
 
 
 def transition_task(args: argparse.Namespace) -> dict[str, Any]:
@@ -343,17 +542,57 @@ def transition_task(args: argparse.Namespace) -> dict[str, Any]:
                 f"stage mismatch: expected {args.from_stage}, found {metadata['stage']}"
             )
         status = args.to_status
+        resume = metadata.get("resume")
+        workflow = metadata["workflow"]
+        snapshot_stages = metadata["workflow_snapshot"]["stages"]
+        if status != "active" and (
+            args.to_stage is not None or args.use_resume or args.resume is not None
+        ):
+            raise NoctisError("blocked or completed transition cannot change stage or resume")
+        if args.use_resume and args.resume is not None:
+            raise NoctisError("--use-resume cannot be combined with --resume")
         if status == "completed":
-            if args.to_stage is not None:
-                raise NoctisError("completed transition cannot declare --to-stage")
+            if metadata["stage"] != workflow[-1] or resume is not None:
+                raise NoctisError("only the final workflow stage can complete a task")
             next_stage = None
+            resume = None
+        elif args.use_resume:
+            if args.to_stage is not None:
+                raise NoctisError("--use-resume cannot be combined with --to-stage")
+            if not isinstance(resume, list) or not resume:
+                raise NoctisError("task has no resume stage")
+            next_stage = resume[0]
+            resume = resume[1:] or None
         else:
             next_stage = args.to_stage or metadata["stage"]
             if not IDENTIFIER.fullmatch(next_stage):
                 raise NoctisError("target stage is invalid")
+            if args.to_stage == "fix":
+                if args.resume is None:
+                    raise NoctisError("transition to fix requires --resume")
+            elif args.to_stage is not None:
+                if resume is not None:
+                    raise NoctisError("task has a recovery queue; use --use-resume")
+                current_index = workflow.index(metadata["stage"])
+                expected = workflow[current_index + 1] if current_index + 1 < len(workflow) else None
+                if next_stage != expected:
+                    raise NoctisError(
+                        f"normal transition must enter next workflow stage: {expected}"
+                    )
+        if args.resume is not None:
+            if any(not IDENTIFIER.fullmatch(stage) for stage in args.resume):
+                raise NoctisError("--resume contains an invalid stage id")
+            if any(stage not in workflow for stage in args.resume):
+                raise NoctisError("--resume contains a stage outside workflow")
+            resume = args.resume
+        if next_stage is not None and next_stage not in snapshot_stages:
+            raise NoctisError(
+                f"target stage '{next_stage}' is missing from workflow_snapshot"
+            )
 
         frontmatter = _replace_top_level(frontmatter, "status", status)
         frontmatter = _replace_top_level(frontmatter, "stage", next_stage)
+        frontmatter = _replace_top_level(frontmatter, "resume", resume)
         revision = metadata["revision"] + 1
         frontmatter = _replace_top_level(frontmatter, "revision", revision)
         _atomic_write(path, _render_document(frontmatter, body))
@@ -362,6 +601,7 @@ def transition_task(args: argparse.Namespace) -> dict[str, Any]:
         "path": str(path),
         "status": status,
         "stage": next_stage,
+        "resume": resume,
         "revision": revision,
     }
 
@@ -650,12 +890,24 @@ def parse_args() -> argparse.Namespace:
 
     inspect = task_actions.add_parser("inspect")
     inspect.add_argument("--task", type=Path, required=True)
+    inspect.add_argument("--section")
+    inspect.add_argument("--item")
     inspect.add_argument("--format", choices=("json", "markdown"), default="json")
+
+    for name in ("append", "update"):
+        command = task_actions.add_parser(name)
+        command.add_argument("--task", type=Path, required=True)
+        command.add_argument("--section", required=True)
+        command.add_argument("--item", required=True)
+        command.add_argument("--expected-revision", type=int, required=True)
+        command.add_argument("--input", default="-")
 
     transition = task_actions.add_parser("transition")
     transition.add_argument("--task", type=Path, required=True)
     transition.add_argument("--from-stage", required=True)
     transition.add_argument("--to-stage")
+    transition.add_argument("--use-resume", action="store_true")
+    transition.add_argument("--resume", nargs="+")
     transition.add_argument(
         "--to-status", choices=VALID_STATUSES, default="active"
     )
@@ -705,6 +957,8 @@ def main() -> int:
             result = transition_task(args)
         elif args.group == "task" and args.action == "scan":
             result = scan_tasks(args)
+        elif args.group == "task" and args.action in ("append", "update"):
+            result = mutate_task_record(args)
         elif args.group == "extend" and args.action == "read":
             result = read_extension(args)
         else:

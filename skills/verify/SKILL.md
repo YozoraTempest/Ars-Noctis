@@ -1,79 +1,53 @@
 ---
 name: verify
-description: 根据用户确认的独立场景执行实际行为验收，按场景组合人工、AI 和 AI 辅助模式，并持久记录操作、证据与结果。仅在用户显式调用、Noctis workflow 包含 verify 或任务处于 verify 阶段时使用；不编写业务代码、单元测试或静态代码审查。
+description: 基于用户逐项确认的独立场景执行实际行为验收，组合人工、AI 与 AI 辅助模式，并记录可观察证据和判定。用于显式验收或 Noctis 的 verify stage；不编写业务代码、单元测试，也不做静态代码审查。
 ---
 
-# 行为验证
+# Verify
 
-只验证实际行为并记录证据。不要修改业务代码、设计单元测试或把静态代码阅读描述为验收。
+只验证实际行为。不要修改实现、编写单元测试或把代码检查当作验收证据。
 
 ## 阶段守卫
 
-在提出场景方案或执行任何验证前，先确定目标 Task 或 Subtask 及其当前状态。仅在 `status: active, stage: verify` 时继续。
+由 Noctis 调度时先用 task 工具 inspect。仅在 `status: active, stage: verify` 时继续；否则返回 `deferred`，不创建记录、操作环境或迁移状态。独立调用时只执行用户明确要求的验收，不注入 review 或 fix。
 
-由 `$noctis` 调度，或与其他原子 Skill 一次性显式调用时，如果当前阶段尚未到 `verify`，则返回接力状态 `deferred` 并把控制权交还调用链。不要把它作为错误或完成结论告知用户，不要提问，也不要创建验证记录、操作环境或修改任务状态。任务记录尚不存在且显式 workflow 中存在更早阶段时同样返回 `deferred`。
+使用已加载的 scenarios 文档 provider 读取场景。规划 Skill 已生成 `scenarios.md` 时必须沿用；没有 provider 或文件时，才使用本 Skill 的 `scripts/scenarios.py` 创建后备场景文档。不得覆盖既有场景，也不得根据实现细节反向编写容易通过的场景。
 
-单独调用本 Skill 且任务阶段不匹配时，报告当前阶段和期望的 `verify` 阶段后停止，不要代替其他 Skill 工作。
+## 确认验收方案
 
-Noctis 管理的多阶段 workflow 需要推进时，相对于本文件读取 `../noctis/registry.yaml`，用下一 workflow 项的 `entry_stage` 更新任务。只读取注册元数据，不读取下一 Skill；注册表缺失、注册项不一致或当前 Skill 在 workflow 中不唯一时设置 `status: blocked` 并停止。单独执行且 workflow 只有本 Skill 时不依赖注册表。
+所有场景都需要用户确认。每个场景使用稳定 ID 和 Given/When/Then，覆盖用户选择的正常、异常与边界行为；不要把多个独立结果藏在一个场景中。
 
-## 准备场景方案
+为每个场景推荐一种模式：
 
-优先使用用户指定的 Task 或 Subtask。否则定位唯一满足 `status: active` 且 `stage: verify` 的任务；存在多个候选时展示候选，不要猜测。
+- `human`：用户操作并最终判定，AI 只记录用户报告。
+- `ai`：AI 使用获准工具执行，并按客观可观察结果判定。
+- `assisted`：AI 负责打开、导航、准备或截图，用户最终判定。
 
-读取 `tasks.md` 和已有 `scenarios.md`，不要读取实现者的实现理由。规划 Skill 优先维护 `scenarios.md`；文件不存在时，根据任务目标提出独立的 Given/When/Then 场景，经用户确认后创建。不得根据实现细节反向设计只会通过的场景，也不得由 implement 或 code-review 改写场景。
+一次性展示场景、模式、步骤、预期证据、环境和副作用。用户可增删或调整；整批明确确认后才执行。若启用 Noctis augmentation，用 `extend sync` 将 `verify:verified` 扩展同步到每个 `scenarios.item.after`，不直接改写场景正文。
 
-为每个场景生成稳定 `Vxx` 编号，关联 `SCxx`，并单独推荐模式：
+## 有界授权
 
-- `human`：用户执行并判定；只能记录用户报告的结果。
-- `ai`：AI 使用可用工具执行并依据客观可观察结果判定。
-- `assisted`：AI 打开页面、导航、准备状态或截图，用户最终判定。
+确认内容必须明确环境、目标、允许的状态变更、测试数据和清理方式。授权只覆盖当前批次。登录状态不是额外权限；切换环境、出现未列明写入或无法确认数据归属时立即停止。生产、权限变更、批量操作和不可逆删除必须另行明确授权。
 
-一次性展示全部场景、模式、执行步骤、预期证据、目标环境和副作用。用户可以增删或调整；全部明确确认后才创建 `verification.md` 并执行。
+## 执行与记录
 
-## 获得有界授权
+使用 `scripts/verification.py` 管理 `verification.md`，不要直接编辑。先在 `Plan` 记录确认后的场景、模式与证据策略，再按稳定 ID 向 `Results` 追加结果。
 
-将有界授权纳入场景方案，明确环境、目标、场景、允许的状态变更、测试数据和清理方式。用户确认整批方案后，授权只在本批次内有效。
+证据策略：
 
-不得把现有登录状态扩展为其他权限。跳转到不同环境、出现未列明写入或无法确认数据归属时立即停止。生产环境、权限变更、批量操作及不可逆删除必须另行获得明确授权。
+- `none`：仅记录文字观察，适合普通 AI 验收；
+- `local`：存入任务相对路径 `evidence/` 且不提交，适合 assisted；
+- `git`：仅在审计或交接需要时使用，先检查敏感信息，并再次确认后才能提交。
 
-## 执行并记录证据
+每项记录 executor、可观察 evidence、verdict owner 和 `passed | failed | blocked | pending`。工具不可用就记 blocked，不伪造或静默降级；只打开页面、看到元素或存在测试代码均不算通过。除未授权写入、数据破坏或安全风险需立即停止外，执行完整个已确认安全批次后统一汇总。
 
-使用最小且合适的手段执行已确认场景，例如人工操作、浏览器插件、已有命令或 API。工具不可用时记录 `blocked`，不得伪造或静默降级。仅打开页面、看到元素或已有测试代码均不等于场景通过。
+## 结果迁移
 
-每个场景记录：
+- 全部 passed：按任务快照进入下一 stage 或 completed。
+- 有 failed：一次性让用户确认修复范围；确认后由 Noctis 转到 `fix`。原 workflow 含 review 时 resume 为 `review verify`，否则为 `verify`。
+- 有 blocked：保留 verify 并将任务设为 blocked。
+- 有 pending：保持 active/verify，等待人工判定。
 
-```markdown
-## V01 <title>
+修复后只重验失败场景和 fix 直接影响的场景；再次一次性确认范围，不自动循环。
 
-- Scenario: `SC01`
-- Mode: `assisted`
-- Executor: AI
-- Evidence Policy: `local`
-- Evidence: <observation or relative path>
-- Verdict by: user
-- Result: pending
-```
-
-为每个场景选择证据策略：
-
-- `none`：只记录文字观察；默认用于普通 AI 验收。
-- `local`：保存到 Task 相对路径 `evidence/`，不进入 Git；默认用于辅助验收。
-- `git`：仅在需要审计或交接时使用；截图生成后检查敏感信息，并再次获得用户确认才能提交。
-
-不要记录 URL 查询参数、令牌或会话信息，也不要硬编码工作区绝对路径。
-
-## 汇总结果
-
-使用 `passed`、`failed`、`blocked` 或 `pending`。除出现未授权写入、数据破坏或安全风险必须立即停止外，执行完整个已确认的安全场景集，再统一汇总。
-
-- 全部 `passed`：存在下一注册 Skill 时推进到它的 `entry_stage`；没有下一项时设置 `status: completed` 并移除 `stage`。
-- 存在 `failed`：保持 `status: active, stage: verify`，一次性等待用户确认修复范围。
-- 存在无法继续的 `blocked`：设置 `status: blocked, stage: verify`。
-- 存在 `pending`：保持 `status: active, stage: verify`，等待对应人工判定。
-
-用户确认修复后推进到 `fix`，记录授权范围并提交任务状态检查点，再由 implement 集中修改；若 workflow 包含 code-review，则修复后先执行定向修复复核，再返回 verify。重验失败场景及修复直接影响的场景，重新一次性确认范围，不自动循环。
-
-## 创建检查点
-
-在场景方案确认后提交一次 `verification.md` 和任务状态；整批执行结束或安全停止后再提交一次。延后的人工判定到达时追加结果检查点。使用 `docs:` 摘要和对应 `Noctis-Task` trailer，不提交业务代码；`git` 证据除外且必须已经单独确认。
+场景方案、整批结果和延后人工判定分别创建必要的 `docs:` 检查点并附 `Noctis-Task` trailer。未经授权不提交敏感证据、不修改业务代码、不推送、不部署。
