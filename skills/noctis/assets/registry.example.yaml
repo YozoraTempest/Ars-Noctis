@@ -1,5 +1,5 @@
-version: 1
-default_preset: "reviewed"
+version: 2
+default_workflow: "reviewed"
 executors:
   code-review:
     provider: "code-review"
@@ -11,7 +11,7 @@ executors:
     provider: "verify"
     source: "manifest"
 supports: {}
-stages:
+capabilities:
   fix:
     contract: 1
     executor: "implement"
@@ -28,15 +28,28 @@ stages:
     contract: 1
     executor: "verify"
     supports: {}
-presets:
+workflow_templates:
   reviewed:
     description: "默认工程修改"
-    workflow:
-      - "implement"
-      - "review"
+    tasks:
+      implement:
+        capability: "implement"
+        depends_on: []
+      review:
+        capability: "review"
+        depends_on:
+          - "implement"
   verified:
     description: "包含实际行为验收"
-    workflow:
-      - "implement"
-      - "review"
-      - "verify"
+    tasks:
+      implement:
+        capability: "implement"
+        depends_on: []
+      review:
+        capability: "review"
+        depends_on:
+          - "implement"
+      verify:
+        capability: "verify"
+        depends_on:
+          - "review"

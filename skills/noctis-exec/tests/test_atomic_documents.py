@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parents[3]
-NOCTIS = REPOSITORY / "skills" / "noctis" / "scripts" / "noctis.py"
+NOCTIS_EXEC = REPOSITORY / "skills" / "noctis-exec" / "scripts" / "exec.py"
 CASES = (
     ("implementation", REPOSITORY / "skills" / "implement" / "scripts" / "implementation.py", "direction", "completed"),
     ("review", REPOSITORY / "skills" / "code-review" / "scripts" / "review.py", "summary", "findings"),
@@ -23,9 +23,9 @@ class AtomicDocumentTests(unittest.TestCase):
         self, script: Path, *arguments: str, input_value: dict | None = None
     ) -> dict:
         result = subprocess.run(
-            [sys.executable, str(script), *arguments],
+            [sys.executable, "-X", "utf8", str(script), *arguments],
             input=json.dumps(input_value, ensure_ascii=False) if input_value is not None else None,
-            text=True,
+            encoding="utf-8",
             capture_output=True,
             check=False,
         )
@@ -70,7 +70,9 @@ class AtomicDocumentTests(unittest.TestCase):
                 extended = subprocess.run(
                     [
                         sys.executable,
-                        str(NOCTIS),
+                        "-X",
+                        "utf8",
+                        str(NOCTIS_EXEC),
                         "extend",
                         "insert",
                         "--document",
@@ -88,7 +90,7 @@ class AtomicDocumentTests(unittest.TestCase):
                         "--expected-revision",
                         "2",
                     ],
-                    text=True,
+                    encoding="utf-8",
                     capture_output=True,
                     check=False,
                 )

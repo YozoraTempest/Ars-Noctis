@@ -17,11 +17,11 @@ from typing import Any
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 TOP_LEVEL_KEYS = (
     "version",
-    "default_preset",
+    "default_workflow",
     "executors",
     "supports",
-    "stages",
-    "presets",
+    "capabilities",
+    "workflow_templates",
 )
 
 
@@ -79,19 +79,42 @@ def _contract(value: Any, context: str) -> int:
     return value
 
 
+def _validate_dag(items: dict[str, list[str]], context: str) -> None:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(item_id: str) -> None:
+        if item_id in visiting:
+            raise RegistryError(f"{context} contains a dependency cycle at '{item_id}'")
+        if item_id in visited:
+            return
+        visiting.add(item_id)
+        for dependency in items[item_id]:
+            visit(dependency)
+        visiting.remove(item_id)
+        visited.add(item_id)
+
+    for item_id in items:
+        visit(item_id)
+
+
 def validate_registry(value: Any) -> dict[str, Any]:
     registry = _mapping(value, "registry")
     _exact_keys(registry, set(TOP_LEVEL_KEYS), "registry")
-    if isinstance(registry["version"], bool) or registry["version"] != 1:
-        raise RegistryError("registry.version must be 1")
+    if isinstance(registry["version"], bool) or registry["version"] != 2:
+        raise RegistryError("registry.version must be 2")
 
-    default_preset = _identifier(registry["default_preset"], "default_preset")
+    default_workflow = _identifier(
+        registry["default_workflow"], "default_workflow"
+    )
     executors = _mapping(registry["executors"], "executors")
     supports = _mapping(registry["supports"], "supports")
-    stages = _mapping(registry["stages"], "stages")
-    presets = _mapping(registry["presets"], "presets")
-    if not executors or not stages or not presets:
-        raise RegistryError("executors, stages, and presets must not be empty")
+    capabilities = _mapping(registry["capabilities"], "capabilities")
+    workflows = _mapping(registry["workflow_templates"], "workflow_templates")
+    if not executors or not capabilities or not workflows:
+        raise RegistryError(
+            "executors, capabilities, and workflow_templates must not be empty"
+        )
 
     for executor_id, raw in executors.items():
         _identifier(executor_id, "executor id")
@@ -116,57 +139,113 @@ def validate_registry(value: Any) -> dict[str, Any]:
                 f"supports.{support_id}.source must be 'manifest' or 'manual'"
             )
 
-    for stage_id, raw in stages.items():
-        _identifier(stage_id, "stage id")
-        spec = _mapping(raw, f"stages.{stage_id}")
+    for capability_id, raw in capabilities.items():
+        _identifier(capability_id, "capability id")
+        spec = _mapping(raw, f"capabilities.{capability_id}")
         _exact_keys(
-            spec, {"contract", "executor", "supports"}, f"stages.{stage_id}"
+            spec,
+            {"contract", "executor", "supports"},
+            f"capabilities.{capability_id}",
         )
-        _contract(spec["contract"], f"stages.{stage_id}.contract")
-        executor = _identifier(spec["executor"], f"stages.{stage_id}.executor")
+        _contract(spec["contract"], f"capabilities.{capability_id}.contract")
+        executor = _identifier(
+            spec["executor"], f"capabilities.{capability_id}.executor"
+        )
         if executor not in executors:
             raise RegistryError(
-                f"stages.{stage_id}.executor references unknown executor '{executor}'"
+                f"capabilities.{capability_id}.executor references unknown "
+                f"executor '{executor}'"
             )
-        bindings = _mapping(spec["supports"], f"stages.{stage_id}.supports")
+        bindings = _mapping(
+            spec["supports"], f"capabilities.{capability_id}.supports"
+        )
         for support_id, activation in bindings.items():
-            _identifier(support_id, f"stages.{stage_id} support id")
+            _identifier(support_id, f"capabilities.{capability_id} support id")
             if support_id not in supports:
                 raise RegistryError(
-                    f"stages.{stage_id}.supports references unknown support '{support_id}'"
+                    f"capabilities.{capability_id}.supports references unknown "
+                    f"support '{support_id}'"
                 )
             if activation not in ("before", "on-request"):
                 raise RegistryError(
-                    f"stages.{stage_id}.supports.{support_id} has invalid activation"
+                    f"capabilities.{capability_id}.supports.{support_id} has "
+                    "invalid activation"
                 )
 
-    for preset_id, raw in presets.items():
-        _identifier(preset_id, "preset id")
-        spec = _mapping(raw, f"presets.{preset_id}")
-        _exact_keys(spec, {"description", "workflow"}, f"presets.{preset_id}")
+    for workflow_id, raw in workflows.items():
+        _identifier(workflow_id, "workflow template id")
+        spec = _mapping(raw, f"workflow_templates.{workflow_id}")
+        _exact_keys(
+            spec,
+            {"description", "tasks"},
+            f"workflow_templates.{workflow_id}",
+        )
         if not isinstance(spec["description"], str) or not spec["description"].strip():
-            raise RegistryError(f"presets.{preset_id}.description must not be empty")
-        workflow = spec["workflow"]
-        if not isinstance(workflow, list) or not workflow:
-            raise RegistryError(f"presets.{preset_id}.workflow must not be empty")
-        normalized = [
-            _identifier(item, f"presets.{preset_id}.workflow item")
-            for item in workflow
-        ]
-        if len(normalized) != len(set(normalized)):
-            raise RegistryError(f"presets.{preset_id}.workflow contains duplicates")
-        if "fix" in normalized:
-            raise RegistryError("fix is a recovery stage and cannot appear in a preset")
-        unknown = [stage for stage in normalized if stage not in stages]
-        if unknown:
             raise RegistryError(
-                f"presets.{preset_id}.workflow references unknown stages: "
-                + ", ".join(unknown)
+                f"workflow_templates.{workflow_id}.description must not be empty"
             )
+        tasks = _mapping(spec["tasks"], f"workflow_templates.{workflow_id}.tasks")
+        if not tasks:
+            raise RegistryError(
+                f"workflow_templates.{workflow_id}.tasks must not be empty"
+            )
+        dependencies: dict[str, list[str]] = {}
+        for task_id, raw_task in tasks.items():
+            _identifier(task_id, f"workflow_templates.{workflow_id} task id")
+            task = _mapping(
+                raw_task, f"workflow_templates.{workflow_id}.tasks.{task_id}"
+            )
+            _exact_keys(
+                task,
+                {"capability", "depends_on"},
+                f"workflow_templates.{workflow_id}.tasks.{task_id}",
+            )
+            capability = _identifier(
+                task["capability"],
+                f"workflow_templates.{workflow_id}.tasks.{task_id}.capability",
+            )
+            if capability == "fix":
+                raise RegistryError(
+                    "fix is a recovery capability and cannot appear in a "
+                    "workflow template"
+                )
+            if capability not in capabilities:
+                raise RegistryError(
+                    f"workflow_templates.{workflow_id}.tasks.{task_id} references "
+                    f"unknown capability '{capability}'"
+                )
+            depends_on = task["depends_on"]
+            if not isinstance(depends_on, list):
+                raise RegistryError(
+                    f"workflow_templates.{workflow_id}.tasks.{task_id}.depends_on "
+                    "must be a list"
+                )
+            normalized = [
+                _identifier(
+                    dependency,
+                    f"workflow_templates.{workflow_id}.tasks.{task_id}.depends_on item",
+                )
+                for dependency in depends_on
+            ]
+            if len(normalized) != len(set(normalized)):
+                raise RegistryError(
+                    f"workflow_templates.{workflow_id}.tasks.{task_id}.depends_on "
+                    "contains duplicates"
+                )
+            dependencies[task_id] = normalized
+        for task_id, depends_on in dependencies.items():
+            unknown = sorted(set(depends_on) - set(tasks))
+            if unknown:
+                raise RegistryError(
+                    f"workflow_templates.{workflow_id}.tasks.{task_id}.depends_on "
+                    "references unknown tasks: " + ", ".join(unknown)
+                )
+        _validate_dag(dependencies, f"workflow_templates.{workflow_id}.tasks")
 
-    if default_preset not in presets:
+    if default_workflow not in workflows:
         raise RegistryError(
-            f"default_preset references unknown preset '{default_preset}'"
+            f"default_workflow references unknown workflow template "
+            f"'{default_workflow}'"
         )
     return registry
 
@@ -179,7 +258,7 @@ def render_registry(registry: dict[str, Any]) -> str:
     registry = validate_registry(registry)
     lines = [
         f"version: {registry['version']}",
-        f"default_preset: {_quoted(registry['default_preset'])}",
+        f"default_workflow: {_quoted(registry['default_workflow'])}",
         "executors:",
     ]
     for executor_id in sorted(registry["executors"]):
@@ -208,12 +287,12 @@ def render_registry(registry: dict[str, Any]) -> str:
                 ]
             )
 
-    lines.append("stages:")
-    for stage_id in sorted(registry["stages"]):
-        spec = registry["stages"][stage_id]
+    lines.append("capabilities:")
+    for capability_id in sorted(registry["capabilities"]):
+        spec = registry["capabilities"][capability_id]
         lines.extend(
             [
-                f"  {stage_id}:",
+                f"  {capability_id}:",
                 f"    contract: {spec['contract']}",
                 f"    executor: {_quoted(spec['executor'])}",
             ]
@@ -228,17 +307,32 @@ def render_registry(registry: dict[str, Any]) -> str:
                     f"      {support_id}: {_quoted(bindings[support_id])}"
                 )
 
-    lines.append("presets:")
-    for preset_id in sorted(registry["presets"]):
-        spec = registry["presets"][preset_id]
+    lines.append("workflow_templates:")
+    for workflow_id in sorted(registry["workflow_templates"]):
+        spec = registry["workflow_templates"][workflow_id]
         lines.extend(
             [
-                f"  {preset_id}:",
+                f"  {workflow_id}:",
                 f"    description: {_quoted(spec['description'])}",
-                "    workflow:",
+                "    tasks:",
             ]
         )
-        lines.extend(f"      - {_quoted(stage)}" for stage in spec["workflow"])
+        for task_id in sorted(spec["tasks"]):
+            task = spec["tasks"][task_id]
+            lines.extend(
+                [
+                    f"      {task_id}:",
+                    f"        capability: {_quoted(task['capability'])}",
+                ]
+            )
+            if task["depends_on"]:
+                lines.append("        depends_on:")
+                lines.extend(
+                    f"          - {_quoted(dependency)}"
+                    for dependency in task["depends_on"]
+                )
+            else:
+                lines.append("        depends_on: []")
     return "\n".join(lines) + "\n"
 
 

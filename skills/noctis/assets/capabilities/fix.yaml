@@ -1,13 +1,13 @@
 version: 1
-kind: stage
+kind: capability
 id: fix
 contract: 1
 summary: 集中修复用户已经接受的审查问题或已授权修复的验收失败。
 entry:
-  status: active
-  stage: fix
+  task_status: active
+  capability: fix
 outcomes:
-  - advanced
+  - completed
   - deferred
   - blocked
 allows:

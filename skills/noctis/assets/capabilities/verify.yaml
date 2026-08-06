@@ -1,21 +1,22 @@
 version: 1
-kind: stage
+kind: capability
 id: verify
 contract: 1
 summary: 执行用户确认的实际行为场景并记录可观察证据与判定。
 entry:
-  status: active
-  stage: verify
+  task_status: active
+  capability: verify
 outcomes:
-  - advanced
+  - completed
+  - spliced
   - waiting
-  - fix
   - deferred
   - blocked
 allows:
   - confirmed-environment-action
   - verification-record-write
   - local-evidence
+  - orchestration-write
   - local-checkpoint
 forbids:
   - unconfirmed-external-write

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Noctis Continue"
+  short_description: "在无上下文时恢复 Noctis 执行入口并交给 Exec"
+  default_prompt: "使用 $noctis-continue 从现有 noctis.md 恢复上下文并进入 Exec。"
+
+policy:
+  allow_implicit_invocation: false
