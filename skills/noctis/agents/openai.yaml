@@ -1,7 +1,7 @@
 interface:
   display_name: "Noctis"
-  short_description: "交互确认后按注册 workflow 渐进协调实现、审查与可选验证"
-  default_prompt: "使用 $noctis 先交互确认目标和工作流，再渐进推进当前任务。"
+  short_description: "交互确认后按项目注册表编排阶段、任务快照与支撑能力"
+  default_prompt: "使用 $noctis 确认任务与阶段工作流，并通过项目快照渐进调度已注册能力。"
 
 policy:
   allow_implicit_invocation: false

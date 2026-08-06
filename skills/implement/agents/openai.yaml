@@ -1,7 +1,7 @@
 interface:
   display_name: "Implement"
-  short_description: "按任务实施功能或集中修复已确认问题并创建本地检查点提交"
-  default_prompt: "使用 $implement 实施或集中修复当前任务，不执行审查和验证。"
+  short_description: "按任务实施功能或集中修复已确认问题，并维护独立实现记录"
+  default_prompt: "使用 $implement 完成当前实现或已确认修复，并记录边界清晰的本地提交。"
 
 policy:
   allow_implicit_invocation: false

@@ -15,6 +15,8 @@
 
 仅在任务确实需要时增加 `scripts/`、`references/` 或 `assets/`。不要在 Skill 目录中增加 `README.md`、变更日志、安装指南或重复说明。
 
+需要被 Noctis 编排的 Skill 在根目录增加 `noctis.yaml`。manifest 只声明 executor/support、contract、文档工具与扩展资源，不复制 `SKILL.md` 流程。所有资源路径相对于本 Skill，且不得逃逸目录，确保 Skill 可独立安装。
+
 ## SKILL.md
 
 - YAML frontmatter 只包含 `name` 和 `description`。
@@ -32,7 +34,14 @@
 
 ## Noctis 注册
 
-- `noctis/registry.yaml` 是 Noctis 可执行 Skill、阶段所有权和 preset 的唯一注册表；安装清单只负责分发，不替代它。
-- 新增、重命名或删除需要由 Noctis 编排的 Skill 时，同步更新注册表。注册本身不自动加入 preset；只有语义和顺序明确时才修改 preset。
-- 注册路径必须相对于注册表且保持在 `skills/` 下。每个 stage 只能属于一个 Skill，`entry_stage` 必须包含在该 Skill 的 stages 中，preset 只能引用已注册 Skill。
-- 修改注册表后重新检查 `noctis/SKILL.md` 的选择语义，并验证所有注册路径及对应 `SKILL.md` 名称。
+- 仓库不维护中心运行时注册表。每个原子 Skill 用同级 `noctis.yaml` 自注册；Noctis 的 stage/support contract 与示例保存在 `noctis/assets/`。
+- `$noctis init` 根据当前可用 manifest 和用户选择，在目标项目生成 `Noctis/registry.yaml`。已有内容不同时必须先展示差异并再次确认，禁止静默覆盖。
+- 同一 stage/support 发现多个 provider 时保留选择，不通过路径顺序暗中决定。没有 manifest 的第三方 Skill 只能由用户提供手工映射。
+- `fix` 是恢复 stage，不得加入正常 preset。任务创建时把 stage contract、executor、support 及 provider 固化到 `tasks.md` 快照；恢复任务默认沿用快照。
+
+## 结构化任务文档
+
+- `tasks.md` 由 `noctis/scripts/noctis.py` 管理；各原子 Skill 独立携带自己的模板和 `create/read/update/append` 文档脚本。
+- 文档 frontmatter 保持最小，只放 document、template、revision 及确有必要的任务状态。所有写入使用 revision 比较和原子替换。
+- 可扩展位置使用稳定 `noctis:slot`、`noctis:collection` 和 `noctis:item` 标记。基础工具只更新自己拥有的 slot，并保留未知 extension。
+- augmentation 由 provider manifest 声明，由 Noctis 在对应 workflow 实际启用时通过脚本持久插入；不得预改源模板或直接字符串拼接生成任务状态。

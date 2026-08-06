@@ -1,7 +1,7 @@
 interface:
   display_name: "Code Review"
-  short_description: "基于精确提交范围执行独立静态代码审查并记录修复复核结论"
-  default_prompt: "使用 $code-review 审查当前 Noctis 任务的精确提交范围并记录结论。"
+  short_description: "审查任务登记的精确提交，并对集中修复执行一次定向复核"
+  default_prompt: "使用 $code-review 静态审查当前任务登记的精确提交并记录可达问题。"
 
 policy:
   allow_implicit_invocation: false
