@@ -23,6 +23,10 @@ def binding(capability: str) -> dict:
     }
 
 
+def artifact_binding() -> dict:
+    return {"inputs": {}, "outputs": {}}
+
+
 def task(
     task_id: str,
     capability: str,
@@ -42,6 +46,7 @@ def task(
         "track": track,
         "dependsOn": depends_on,
         "binding": binding(capability),
+        "artifactBinding": artifact_binding(),
         "record": {
             "document": document,
             "path": f"tracks/{track}/{document}.md",
@@ -93,6 +98,7 @@ def task_payload(task_id: str = "T01") -> dict:
         },
         "capability": "implement",
         "binding": binding("implement"),
+        "artifactBinding": artifact_binding(),
         "record": {
             "document": "implementation",
             "path": "implementation.md",
@@ -143,6 +149,7 @@ class ToolchainTests(unittest.TestCase):
         *,
         status: str | None = None,
         outcome: str | None = None,
+        artifacts: dict | None = None,
     ) -> dict:
         arguments = [
             "orchestration",
@@ -157,7 +164,9 @@ class ToolchainTests(unittest.TestCase):
         if action == "finish":
             arguments.extend(["--to-status", status or "completed"])
             arguments.extend(["--outcome", outcome or "advanced"])
-        result = self.run_tool(*arguments)
+            if artifacts is not None:
+                arguments.extend(["--artifacts", "-"])
+        result = self.run_tool(*arguments, input_value=artifacts)
         return json.loads(result.stdout)
 
     def test_task_record_is_resumable_without_a_unit(self) -> None:
@@ -165,7 +174,7 @@ class ToolchainTests(unittest.TestCase):
             root = Path(directory)
             (root / "Noctis").mkdir()
             (root / "Noctis" / "registry.yaml").write_text(
-                "version: 2\n", encoding="utf-8"
+                "version: 3\n", encoding="utf-8"
             )
             task_root = root / "Noctis" / "accounts" / "tasks" / "T01"
             validated = self.run_tool(
@@ -193,7 +202,7 @@ class ToolchainTests(unittest.TestCase):
 
             prepared = self.run_tool("entry", "--start", str(task_root))
             entry = json.loads(prepared.stdout)["entry"]
-            self.assertEqual(entry["version"], 1)
+            self.assertEqual(entry["version"], 2)
             self.assertEqual(entry["orchestration"]["level"], "task")
             self.assertEqual(entry["target"]["id"], "T01")
             self.assertEqual(entry["expectedRevision"], 1)
@@ -211,7 +220,7 @@ class ToolchainTests(unittest.TestCase):
             root = Path(directory)
             (root / "Noctis").mkdir()
             (root / "Noctis" / "registry.yaml").write_text(
-                "version: 2\n", encoding="utf-8"
+                "version: 3\n", encoding="utf-8"
             )
             work = root / "Noctis" / "accounts" / "work" / "migration"
             work_payload = {
@@ -283,6 +292,7 @@ class ToolchainTests(unittest.TestCase):
                         "id": "U01.T01",
                         "status": "completed",
                         "outcome": "advanced",
+                        "artifacts": {},
                     }
                 ],
             )
@@ -400,6 +410,7 @@ class ToolchainTests(unittest.TestCase):
                 "4",
                 input_value={
                     "sourceOutcome": "findings-accepted",
+                    "sourceArtifacts": {},
                     "tasks": inserted,
                     "tail": "U01.T05",
                 },
@@ -515,6 +526,129 @@ class ToolchainTests(unittest.TestCase):
                 ok=False,
             )
             self.assertIn("recovery capability", failed.stderr)
+
+    def test_artifacts_are_validated_and_resolved_for_the_next_task(self) -> None:
+        producer = task("U01.T01", "implement", "map-frontend", [])
+        producer["artifactBinding"]["outputs"] = {
+            "implementation": {
+                "type": "implementation-record",
+                "formats": ["ars.implementation@1"],
+                "required": True,
+            }
+        }
+        consumer = task("U01.T02", "review", "map-frontend", ["U01.T01"])
+        consumer["artifactBinding"]["inputs"] = {
+            "implementation": {
+                "type": "implementation-record",
+                "formats": ["ars.implementation@1"],
+                "required": True,
+                "source": {"task": "U01.T01", "output": "implementation"},
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Noctis").mkdir()
+            (root / "Noctis" / "registry.yaml").write_text(
+                "version: 3\n", encoding="utf-8"
+            )
+            unit = self.create_unit(root, [producer, consumer])
+            self.transition("start", unit, "U01.T01", 1)
+            missing = self.run_tool(
+                "orchestration",
+                "finish",
+                "--path",
+                str(unit),
+                "--id",
+                "U01.T01",
+                "--to-status",
+                "completed",
+                "--outcome",
+                "implemented",
+                "--expected-revision",
+                "2",
+                ok=False,
+            )
+            self.assertIn("required outputs", missing.stderr)
+
+            artifact = {
+                "implementation": {
+                    "type": "implementation-record",
+                    "format": "ars.implementation@1",
+                    "location": "tracks/map-frontend/implementation.md",
+                    "revision": "2",
+                }
+            }
+            self.transition(
+                "finish", unit, "U01.T01", 2, artifacts=artifact
+            )
+            prepared = self.run_tool(
+                "entry",
+                "--record",
+                str(unit / "noctis.md"),
+                "--id",
+                "U01.T02",
+            )
+            target = json.loads(prepared.stdout)["entry"]["target"]
+            self.assertEqual(
+                target["resolvedInputs"],
+                {
+                    "implementation": {
+                        "artifact": artifact["implementation"],
+                        "source": {
+                            "task": "U01.T01",
+                            "output": "implementation",
+                            "provider": "implement",
+                            "record": {
+                                "document": "implementation",
+                                "path": "tracks/map-frontend/implementation.md",
+                            },
+                        },
+                    }
+                },
+            )
+            self.assertEqual(target["unresolvedInputs"], [])
+            self.transition("start", unit, "U01.T02", 3)
+
+    def test_external_artifact_is_resolved_for_a_single_task(self) -> None:
+        payload = task_payload()
+        payload["artifactBinding"]["inputs"] = {
+            "source": {
+                "type": "dataset",
+                "formats": ["tabular.csv@1"],
+                "required": True,
+                "source": {
+                    "artifact": {
+                        "type": "dataset",
+                        "format": "tabular.csv@1",
+                        "location": "input/customers.csv",
+                        "revision": "sha256:example",
+                    }
+                },
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Noctis").mkdir()
+            (root / "Noctis" / "registry.yaml").write_text(
+                "version: 3\n", encoding="utf-8"
+            )
+            task_root = root / "Noctis" / "data" / "tasks" / "T01"
+            self.run_tool(
+                "orchestration",
+                "create",
+                "--level",
+                "task",
+                "--path",
+                str(task_root),
+                input_value=payload,
+            )
+            prepared = self.run_tool("entry", "--start", str(task_root))
+            target = json.loads(prepared.stdout)["entry"]["target"]
+            self.assertEqual(
+                target["resolvedInputs"]["source"]["source"],
+                {"external": True},
+            )
+            self.transition("start", task_root, "T01", 1)
 
     def test_extensions_support_once_each_and_item_scopes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

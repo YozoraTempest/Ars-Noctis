@@ -9,7 +9,7 @@ description: 基于用户逐项确认的独立场景执行实际行为验收，�
 
 ## 进入 Task
 
-由 Noctis Exec 调度时用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `verify` 时继续；否则返回 deferred，不创建记录、操作环境或迁移状态。独立调用时只执行用户明确要求的验收，不注入 Review 或 Fix。
+由 Noctis Exec 调度时用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `verify` 时继续；否则返回 deferred，不创建记录、操作环境或迁移状态。存在 `resolvedInputs.review` 时只把它作为审查范围和已知风险来源，不把代码审查结论当作行为证据。独立调用时只执行用户明确要求的验收，不注入 Review 或 Fix。
 
 使用已加载的 scenarios provider 读取 Unit 级 `scenarios.md`。规划 Skill 已生成场景时必须沿用；没有 provider 或文件时，才用 `scripts/scenarios.py` 创建后备场景。不得覆盖既有场景，也不得根据实现细节反向编写容易通过的场景。
 
@@ -43,8 +43,8 @@ description: 基于用户逐项确认的独立场景执行实际行为验收，�
 
 ## 处理结果
 
-- 全部 passed：完成当前 Verify Task。
-- 有 failed：一次性让用户确认修复范围；确认后用 Noctis Exec `orchestration splice` 插入 Fix、必要的 Review 和新 Verify Task，再把原 pending 后继接到新 Verify。
+- 全部 passed：完成当前 Verify Task，并把最终 `verification.md` 发布为 `ars.verification@1` ArtifactRef。
+- 有 failed：一次性让用户确认修复范围；确认后用 Noctis Exec `orchestration splice` 的 `sourceArtifacts` 发布当前 verification 记录并插入 Fix、必要的 Review 和新 Verify Task，再把原 pending 后继接到新 Verify。
 - 有 blocked：以 blocked 结束当前 Task。
 - 有 pending：保持 active，等待人工判定。
 

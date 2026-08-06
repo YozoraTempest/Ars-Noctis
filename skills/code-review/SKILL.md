@@ -11,7 +11,7 @@ description: 对 Task 登记的精确提交执行静态代码审查，记录可�
 
 由 Noctis Exec 调度时，用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `review` 时继续；否则返回 deferred。独立调用时按用户给出的提交、差异或范围审查，不注入其他 Task。
 
-通过已加载的结构化工具读取：
+优先从当前 Task 的 `resolvedInputs.implementation` 取得 ArtifactRef 和来源 record，并通过来源 provider 已注册的文档工具读取。没有该可选输入的独立或集成审查，再按用户明确范围确定提交。通过已加载的结构化工具读取：
 
 - Unit `noctis.md` 中当前 Review Task 的依赖、目标和预期结果；
 - 对应 Track 的 `implementation.md` 所登记的精确业务提交；
@@ -37,9 +37,9 @@ description: 对 Task 登记的精确提交执行静态代码审查，记录可�
 
 使用 `scripts/review.py` 管理 Task `record.path` 指向的 `review.md`，不要直接编辑。每个 finding 使用稳定 ID，记录 priority、location、scenario、evidence、impact、minimal fix、decision 和 resolution。
 
-无 finding 时记录“未发现代码级问题”，不得声称测试或行为验证通过，然后完成当前 Review Task。
+无 finding 时记录“未发现代码级问题”，不得声称测试或行为验证通过，然后完成当前 Review Task，并把最终 `review.md` 发布为 `ars.review@1` ArtifactRef。
 
-有 finding 时一次性展示完整清单，由用户批量决定 accepted/rejected。存在 accepted 时，使用 Noctis Exec `orchestration splice` 原子完成当前 Review Task，并插入 Fix 与一次新 Review Task；原有 pending 后继改为依赖新 Review。全部 rejected 时直接完成当前 Task。Review 不自行修复。
+有 finding 时一次性展示完整清单，由用户批量决定 accepted/rejected。存在 accepted 时，使用 Noctis Exec `orchestration splice` 的 `sourceArtifacts` 原子完成当前 Review Task并发布 `review` Artifact，再插入 Fix 与一次新 Review Task；原有 pending 后继改为依赖新 Review。全部 rejected 时通过普通 finish 发布同一 Artifact 并完成当前 Task。Review 不自行修复。
 
 ## 定向复核
 

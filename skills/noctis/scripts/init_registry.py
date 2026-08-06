@@ -15,6 +15,9 @@ from typing import Any
 
 
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+ARTIFACT_FORMAT = re.compile(
+    r"^[a-z0-9]+(?:[.-][a-z0-9]+)*@[1-9][0-9]*$"
+)
 TOP_LEVEL_KEYS = (
     "version",
     "default_workflow",
@@ -79,6 +82,60 @@ def _contract(value: Any, context: str) -> int:
     return value
 
 
+def _string_list(
+    value: Any, context: str, *, required: bool = False
+) -> list[str]:
+    if not isinstance(value, list):
+        raise RegistryError(f"{context} must be a list")
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise RegistryError(f"{context} items must be non-empty strings")
+        normalized.append(item.strip())
+    if required and not normalized:
+        raise RegistryError(f"{context} must not be empty")
+    if len(normalized) != len(set(normalized)):
+        raise RegistryError(f"{context} contains duplicates")
+    return normalized
+
+
+def _ports(value: Any, context: str) -> dict[str, Any]:
+    ports = _mapping(value, context)
+    for port_id, raw in ports.items():
+        _identifier(port_id, f"{context} port id")
+        spec = _mapping(raw, f"{context}.{port_id}")
+        _exact_keys(
+            spec,
+            {"type", "formats", "required"},
+            f"{context}.{port_id}",
+        )
+        _identifier(spec["type"], f"{context}.{port_id}.type")
+        formats = _string_list(
+            spec["formats"], f"{context}.{port_id}.formats", required=True
+        )
+        for artifact_format in formats:
+            if not ARTIFACT_FORMAT.fullmatch(artifact_format):
+                raise RegistryError(
+                    f"{context}.{port_id}.formats contains invalid format "
+                    f"'{artifact_format}'"
+                )
+        if not isinstance(spec["required"], bool):
+            raise RegistryError(f"{context}.{port_id}.required must be a boolean")
+    return ports
+
+
+def _source(value: Any, context: str) -> tuple[str, str]:
+    if not isinstance(value, str):
+        raise RegistryError(f"{context} must be '<task>.<output>'")
+    parts = value.split(".")
+    if len(parts) != 2:
+        raise RegistryError(f"{context} must be '<task>.<output>'")
+    return (
+        _identifier(parts[0], f"{context} task"),
+        _identifier(parts[1], f"{context} output"),
+    )
+
+
 def _validate_dag(items: dict[str, list[str]], context: str) -> None:
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -101,8 +158,8 @@ def _validate_dag(items: dict[str, list[str]], context: str) -> None:
 def validate_registry(value: Any) -> dict[str, Any]:
     registry = _mapping(value, "registry")
     _exact_keys(registry, set(TOP_LEVEL_KEYS), "registry")
-    if isinstance(registry["version"], bool) or registry["version"] != 2:
-        raise RegistryError("registry.version must be 2")
+    if isinstance(registry["version"], bool) or registry["version"] != 3:
+        raise RegistryError("registry.version must be 3")
 
     default_workflow = _identifier(
         registry["default_workflow"], "default_workflow"
@@ -144,7 +201,14 @@ def validate_registry(value: Any) -> dict[str, Any]:
         spec = _mapping(raw, f"capabilities.{capability_id}")
         _exact_keys(
             spec,
-            {"contract", "executor", "supports"},
+            {
+                "contract",
+                "executor",
+                "supports",
+                "inputs",
+                "outputs",
+                "side_effects",
+            },
             f"capabilities.{capability_id}",
         )
         _contract(spec["contract"], f"capabilities.{capability_id}.contract")
@@ -171,6 +235,17 @@ def validate_registry(value: Any) -> dict[str, Any]:
                     f"capabilities.{capability_id}.supports.{support_id} has "
                     "invalid activation"
                 )
+        _ports(spec["inputs"], f"capabilities.{capability_id}.inputs")
+        _ports(spec["outputs"], f"capabilities.{capability_id}.outputs")
+        side_effects = _string_list(
+            spec["side_effects"],
+            f"capabilities.{capability_id}.side_effects",
+        )
+        for side_effect in side_effects:
+            _identifier(
+                side_effect,
+                f"capabilities.{capability_id}.side_effects item",
+            )
 
     for workflow_id, raw in workflows.items():
         _identifier(workflow_id, "workflow template id")
@@ -190,6 +265,8 @@ def validate_registry(value: Any) -> dict[str, Any]:
                 f"workflow_templates.{workflow_id}.tasks must not be empty"
             )
         dependencies: dict[str, list[str]] = {}
+        task_capabilities: dict[str, str] = {}
+        task_inputs: dict[str, dict[str, str]] = {}
         for task_id, raw_task in tasks.items():
             _identifier(task_id, f"workflow_templates.{workflow_id} task id")
             task = _mapping(
@@ -197,7 +274,7 @@ def validate_registry(value: Any) -> dict[str, Any]:
             )
             _exact_keys(
                 task,
-                {"capability", "depends_on"},
+                {"capability", "depends_on", "inputs"},
                 f"workflow_templates.{workflow_id}.tasks.{task_id}",
             )
             capability = _identifier(
@@ -233,6 +310,39 @@ def validate_registry(value: Any) -> dict[str, Any]:
                     "contains duplicates"
                 )
             dependencies[task_id] = normalized
+            task_capabilities[task_id] = capability
+            inputs = _mapping(
+                task["inputs"],
+                f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs",
+            )
+            capability_inputs = _mapping(
+                capabilities[capability]["inputs"],
+                f"capabilities.{capability}.inputs",
+            )
+            unknown_inputs = sorted(set(inputs) - set(capability_inputs))
+            if unknown_inputs:
+                raise RegistryError(
+                    f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs "
+                    "references unknown capability inputs: "
+                    + ", ".join(unknown_inputs)
+                )
+            missing_inputs = sorted(
+                input_id
+                for input_id, port in capability_inputs.items()
+                if port["required"] and input_id not in inputs
+            )
+            if missing_inputs:
+                raise RegistryError(
+                    f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs "
+                    "is missing required inputs: " + ", ".join(missing_inputs)
+                )
+            task_inputs[task_id] = {}
+            for input_id, source in inputs.items():
+                source_task, source_output = _source(
+                    source,
+                    f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs.{input_id}",
+                )
+                task_inputs[task_id][input_id] = f"{source_task}.{source_output}"
         for task_id, depends_on in dependencies.items():
             unknown = sorted(set(depends_on) - set(tasks))
             if unknown:
@@ -241,6 +351,40 @@ def validate_registry(value: Any) -> dict[str, Any]:
                     "references unknown tasks: " + ", ".join(unknown)
                 )
         _validate_dag(dependencies, f"workflow_templates.{workflow_id}.tasks")
+        for task_id, inputs in task_inputs.items():
+            capability = task_capabilities[task_id]
+            target_ports = capabilities[capability]["inputs"]
+            for input_id, source in inputs.items():
+                source_task, source_output = source.split(".")
+                if source_task not in tasks:
+                    raise RegistryError(
+                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                        f"{input_id} references unknown task '{source_task}'"
+                    )
+                if source_task not in dependencies[task_id]:
+                    raise RegistryError(
+                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                        f"{input_id} must reference a direct dependency"
+                    )
+                source_capability = task_capabilities[source_task]
+                source_ports = capabilities[source_capability]["outputs"]
+                if source_output not in source_ports:
+                    raise RegistryError(
+                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                        f"{input_id} references unknown output '{source}'"
+                    )
+                target = target_ports[input_id]
+                producer = source_ports[source_output]
+                if target["type"] != producer["type"]:
+                    raise RegistryError(
+                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                        f"{input_id} has incompatible artifact types"
+                    )
+                if not set(target["formats"]) & set(producer["formats"]):
+                    raise RegistryError(
+                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                        f"{input_id} requires an explicit adapter task"
+                    )
 
     if default_workflow not in workflows:
         raise RegistryError(
@@ -306,6 +450,35 @@ def render_registry(registry: dict[str, Any]) -> str:
                 lines.append(
                     f"      {support_id}: {_quoted(bindings[support_id])}"
                 )
+        for ports_key in ("inputs", "outputs"):
+            ports = spec[ports_key]
+            if not ports:
+                lines.append(f"    {ports_key}: {{}}")
+                continue
+            lines.append(f"    {ports_key}:")
+            for port_id in sorted(ports):
+                port = ports[port_id]
+                lines.extend(
+                    [
+                        f"      {port_id}:",
+                        f"        type: {_quoted(port['type'])}",
+                        "        formats:",
+                        *(
+                            f"          - {_quoted(artifact_format)}"
+                            for artifact_format in port["formats"]
+                        ),
+                        "        required: "
+                        + ("true" if port["required"] else "false"),
+                    ]
+                )
+        side_effects = spec["side_effects"]
+        if not side_effects:
+            lines.append("    side_effects: []")
+        else:
+            lines.append("    side_effects:")
+            lines.extend(
+                f"      - {_quoted(side_effect)}" for side_effect in side_effects
+            )
 
     lines.append("workflow_templates:")
     for workflow_id in sorted(registry["workflow_templates"]):
@@ -333,6 +506,15 @@ def render_registry(registry: dict[str, Any]) -> str:
                 )
             else:
                 lines.append("        depends_on: []")
+            inputs = task["inputs"]
+            if not inputs:
+                lines.append("        inputs: {}")
+            else:
+                lines.append("        inputs:")
+                for input_id in sorted(inputs):
+                    lines.append(
+                        f"          {input_id}: {_quoted(inputs[input_id])}"
+                    )
     return "\n".join(lines) + "\n"
 
 

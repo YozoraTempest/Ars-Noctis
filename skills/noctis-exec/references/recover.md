@@ -6,7 +6,7 @@
 
 使用 Unit 级 `orchestration splice` 一次完成：
 
-- 结束当前 active Task并记录异常 outcome；
+- 结束当前 active Task并记录异常 outcome 和已经产生的 sourceArtifacts；
 - 插入新的 Fix、复审或重验 Task；
 - 要求所有新 Task 从当前 Task 可达，并汇合到指定 tail；
 - 把当前 Task 的 pending 直接后继重接到 tail。
@@ -18,7 +18,7 @@
 
 只重接尚未开始的后继。任何后继已 active、completed 或 blocked 时返回 `replan-required`，不要改写已发生历史。
 
-Fix、复审和重验使用新的稳定 Task ID，并固化各自 capability、provider、support 与记录路径。不要复用旧 Task或维护 resume 队列。
+Fix、复审和重验使用新的稳定 Task ID，并固化各自 capability、provider、support、Artifact Binding 与记录路径。新 Task 的输入只能引用 splice 内的直接依赖或已确认外部 Artifact。不要复用旧 Task或维护 resume 队列。
 
 ## 完成恢复
 

@@ -1,6 +1,6 @@
 ---
 name: noctis-continue
-description: 在当前执行者缺少可信对话上下文时，从项目既有 noctis.md 恢复最小执行入口并交给 Noctis Exec。用于断点恢复、上下文压缩后继续、切换对话、切换模型或更换 Agent；也可由 $noctis continue 路由调用。不规划新任务、不判断执行状态、不修改任何生命周期记录。
+description: 在当前执行者缺少可信对话上下文时，从项目既有 noctis.md 恢复最小执行入口、Artifact 输入和来源句柄并交给 Noctis Exec。用于断点恢复、上下文压缩后继续、切换对话、切换模型或更换 Agent；也可由 $noctis continue 路由调用。不规划新任务、不判断执行状态、不修改任何生命周期记录。
 ---
 
 # Noctis Continue
@@ -15,7 +15,7 @@ description: 在当前执行者缺少可信对话上下文时，从项目既有 
 4. 唯一未完成根记录直接使用；多个候选展示路径、目标和状态并让用户选择；没有候选或记录损坏时报告事实，不新建计划。
 5. 把返回的 ExecutionEntry 原样交给 `noctis-exec`，由 Exec 判断 `pending`、`active`、`blocked` 或 `completed` 并继续生命周期。
 
-ExecutionEntry v1 只包含当前记录、revision、父级目标与完成条件、授权、active/ready/blocked 列表，以及明确目标的 binding、记录路径和直接前置 outcome。
+ExecutionEntry v2 只包含当前记录、revision、父级目标与完成条件、授权、active/ready/blocked 列表，以及明确目标的 binding、记录路径、直接前置结果、resolvedInputs 和 unresolvedInputs。
 
 ## 保持边界
 

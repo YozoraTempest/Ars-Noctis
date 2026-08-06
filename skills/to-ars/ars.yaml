@@ -1,0 +1,27 @@
+version: 1
+kind: ars
+name: to-ars
+role: executor
+state:
+  mode: external
+capabilities:
+  - id: adapt-ars
+    contract: 1
+    inputs:
+      source-skill:
+        type: skill-package
+        formats:
+          - codex.skill@1
+          - noctis.legacy-skill@1
+        required: true
+    outputs:
+      ars-skill:
+        type: skill-package
+        formats:
+          - ars.skill@1
+        required: true
+    side_effects:
+      - filesystem-write
+supports: []
+documents: []
+augmentations: []

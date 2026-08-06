@@ -1,0 +1,31 @@
+version: 1
+kind: ars
+name: noctis-exec
+role: executor
+state:
+  mode: documents
+capabilities:
+  - id: execute-workflow
+    contract: 1
+    inputs: {}
+    outputs: {}
+    side_effects:
+      - orchestration-write
+supports: []
+documents:
+  - id: task-orchestration
+    contract: 2
+    file: noctis.md
+    template: assets/templates/task.md
+    tool: scripts/exec.py
+  - id: unit-orchestration
+    contract: 3
+    file: noctis.md
+    template: assets/templates/unit.md
+    tool: scripts/exec.py
+  - id: work-orchestration
+    contract: 2
+    file: noctis.md
+    template: assets/templates/work.md
+    tool: scripts/exec.py
+augmentations: []

@@ -6,6 +6,14 @@ summary: 集中修复用户已经接受的审查问题或已授权修复的验�
 entry:
   task_status: active
   capability: fix
+artifacts:
+  inputs: {}
+  outputs:
+    implementation:
+      type: implementation-record
+      formats:
+        - ars.implementation@1
+      required: true
 outcomes:
   - completed
   - deferred

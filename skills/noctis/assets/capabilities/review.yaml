@@ -6,6 +6,19 @@ summary: 对 Task 登记的精确提交执行一次静态代码审查或定向�
 entry:
   task_status: active
   capability: review
+artifacts:
+  inputs:
+    implementation:
+      type: implementation-record
+      formats:
+        - ars.implementation@1
+      required: false
+  outputs:
+    review:
+      type: review-record
+      formats:
+        - ars.review@1
+      required: true
 outcomes:
   - completed
   - spliced

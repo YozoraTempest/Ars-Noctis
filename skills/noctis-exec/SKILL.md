@@ -1,6 +1,6 @@
 ---
 name: noctis-exec
-description: 接收 Noctis 已确认的 Task、Unit 或 Work 执行计划，或接收 Noctis Continue 重建的 ExecutionEntry，创建并推进 noctis.md、调度已固化的 executor/support、处理阻塞与异常恢复，并维护结构化文档扩展。用于首次进入或继续既有 Noctis 执行生命周期；不负责需求规划、代码实现、代码审查或行为验证。
+description: 接收 Noctis 已确认的 Task、Unit 或 Work 执行计划，或接收 Noctis Continue 重建的 ExecutionEntry，创建并推进 noctis.md、解析 Artifact Binding、调度已固化的原生 Ars/support、处理阻塞与异常恢复，并维护结构化文档扩展。用于首次进入或继续既有 Noctis 执行生命周期；不负责需求规划或执行具体业务能力。
 ---
 
 # Noctis Exec
@@ -11,8 +11,8 @@ description: 接收 Noctis 已确认的 Task、Unit 或 Work 执行计划，或�
 
 只接受两种入口：
 
-- ExecutionPlan：由 Noctis 交互确认，包含层级、目标、完成条件、授权、依赖图和 Task binding。
-- ExecutionEntry v1：由 Noctis Continue 从已有 `noctis.md` 重建，包含记录路径、revision、最小父级上下文和可执行状态。
+- ExecutionPlan v2：由 Noctis 交互确认，包含层级、目标、完成条件、授权、依赖图、Task binding 和 Artifact Binding。
+- ExecutionEntry v2：由 Noctis Continue 从已有 `noctis.md` 重建，包含记录路径、revision、最小父级上下文、resolved inputs 和可执行状态。
 
 Task、Unit 与 Work 统一使用 `pending | active | blocked | completed`。Work 只观察 Unit，Unit 只观察 Task；Task 内 Step 由 executor 自己维护。
 
@@ -21,6 +21,7 @@ Task、Unit 与 Work 统一使用 `pending | active | blocked | completed`。Wor
 - 首次写入前用 `orchestration create --dry-run` 校验全部计划记录。
 - 每次状态写入都使用刚读取的 `expectedRevision`，冲突时重新读取，不盲目覆盖。
 - 沿用 Task 已固化的 capability、executor、support 和记录路径，不用项目注册表替换快照。
+- 启动 Task 前解析 required input；完成 Task 时校验并保存声明的 output ArtifactRef。
 - Continue 的来源不影响执行语义；断点、换模型、换 Agent 和换对话都进入同一流程。
 - 范围、依赖图、provider、完成条件或授权变化时返回 `replan-required`，交回 Noctis。
 

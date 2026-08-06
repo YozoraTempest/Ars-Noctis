@@ -1,0 +1,41 @@
+version: 1
+kind: ars
+name: implement
+role: executor
+state:
+  mode: documents
+capabilities:
+  - id: fix
+    contract: 1
+    inputs: {}
+    outputs:
+      implementation:
+        type: implementation-record
+        formats:
+          - ars.implementation@1
+        required: true
+    side_effects:
+      - local-commit
+      - project-write
+      - task-record-write
+  - id: implement
+    contract: 1
+    inputs: {}
+    outputs:
+      implementation:
+        type: implementation-record
+        formats:
+          - ars.implementation@1
+        required: true
+    side_effects:
+      - local-commit
+      - project-write
+      - task-record-write
+supports: []
+documents:
+  - id: implementation
+    contract: 1
+    file: implementation.md
+    template: assets/templates/implementation.md
+    tool: scripts/implementation.py
+augmentations: []

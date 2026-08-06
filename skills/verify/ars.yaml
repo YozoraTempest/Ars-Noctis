@@ -1,0 +1,43 @@
+version: 1
+kind: ars
+name: verify
+role: executor
+state:
+  mode: documents
+capabilities:
+  - id: verify
+    contract: 1
+    inputs:
+      review:
+        type: review-record
+        formats:
+          - ars.review@1
+        required: false
+    outputs:
+      verification:
+        type: verification-record
+        formats:
+          - ars.verification@1
+        required: true
+    side_effects:
+      - behavior-verification
+      - local-checkpoint
+      - verification-record-write
+supports: []
+documents:
+  - id: scenarios
+    contract: 1
+    file: scenarios.md
+    template: assets/templates/scenarios.md
+    tool: scripts/scenarios.py
+  - id: verification
+    contract: 1
+    file: verification.md
+    template: assets/templates/verification.md
+    tool: scripts/verification.py
+augmentations:
+  - id: verified
+    target: scenarios
+    slot: scenarios.item.after
+    scope: each
+    template: assets/augmentations/scenario-verified.md

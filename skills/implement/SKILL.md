@@ -9,7 +9,7 @@ description: 实现明确的工程任务，或集中修复用户已经接受的�
 
 ## 进入 Task
 
-由 Noctis Exec 调度时，用已加载的 `orchestration inspect --id <task-id>` 读取目标 Task。仅在 `status: active` 且 capability 为 `implement` 或 `fix` 时继续；否则返回 deferred，不修改文件或状态。使用 Task 固化的 Track、binding 和 record，不读取项目注册表或其他 Skill 正文。
+由 Noctis Exec 调度时，用已加载的 `orchestration inspect --id <task-id>` 读取目标 Task。仅在 `status: active` 且 capability 为 `implement` 或 `fix` 时继续；否则返回 deferred，不修改文件或状态。使用 Task 固化的 Track、binding、record 和 `resolvedInputs`；只读取声明接受的 Artifact，不修改上游原生产物，也不读取项目注册表或其他 Skill 正文。
 
 独立调用时只执行用户指定的实现或修复，不增加 Review、Verify 或其他 Task。没有 Noctis 上下文时，不伪造编排状态。
 
@@ -24,7 +24,7 @@ description: 实现明确的工程任务，或集中修复用户已经接受的�
 - Direction：本 Task 的方向、边界和关键约束；
 - Current：本轮 Step、目标仓库和已知阻塞。
 
-完成后以稳定 Task ID 向 Completed 追加结果、仓库、业务提交哈希和已完成 Step。记录事实，不写审查结论或行为通过声明。一个 Track 的后续 Fix Task 可以复用同一文档，但必须使用新的 Task ID。
+完成后以稳定 Task ID 向 Completed 追加结果、仓库、业务提交哈希和已完成 Step。记录事实，不写审查结论或行为通过声明。一个 Track 的后续 Fix Task 可以复用同一文档，但必须使用新的 Task ID。保留脚本返回的 document revision，用于发布 `ars.implementation@1` ArtifactRef。
 
 ## Implement Task
 
@@ -32,7 +32,7 @@ description: 实现明确的工程任务，或集中修复用户已经接受的�
 2. 在既定范围内实现，不加入防御性增强、可选重构或未经确认的兼容策略。
 3. 检查差异与工作树，保留用户无关修改，只暂存当前 Task。
 4. 每个完成的 Task 在所属仓库创建一个 Conventional Commit，并附 `Noctis-Task: <task-id>` trailer。
-5. 登记提交和完成方式，再用 Noctis Exec `orchestration finish` 把 Task 标为 `completed`。
+5. 登记提交和完成方式，再用 Noctis Exec `orchestration finish --artifacts` 把 Task 标为 `completed`；`implementation` 输出指向 Task `record.path`，revision 使用最终实现记录 revision。
 
 差异检查、语法定位和 Git 状态不属于测试；不要借此宣称行为已验证。
 

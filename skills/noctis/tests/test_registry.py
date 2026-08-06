@@ -21,7 +21,7 @@ def load_script(name: str, path: Path):
 
 def registry_input() -> dict:
     return {
-        "version": 2,
+        "version": 3,
         "default_workflow": "reviewed",
         "executors": {
             "code-review": {"provider": "code-review", "source": "manifest"},
@@ -30,41 +30,112 @@ def registry_input() -> dict:
         },
         "supports": {},
         "capabilities": {
-            "fix": {"contract": 1, "executor": "implement", "supports": {}},
+            "fix": {
+                "contract": 1,
+                "executor": "implement",
+                "supports": {},
+                "inputs": {},
+                "outputs": {
+                    "implementation": {
+                        "type": "implementation-record",
+                        "formats": ["ars.implementation@1"],
+                        "required": True,
+                    }
+                },
+                "side_effects": ["project-write", "local-commit"],
+            },
             "implement": {
                 "contract": 1,
                 "executor": "implement",
                 "supports": {},
+                "inputs": {},
+                "outputs": {
+                    "implementation": {
+                        "type": "implementation-record",
+                        "formats": ["ars.implementation@1"],
+                        "required": True,
+                    }
+                },
+                "side_effects": ["project-write", "local-commit"],
             },
             "review": {
                 "contract": 1,
                 "executor": "code-review",
                 "supports": {},
+                "inputs": {
+                    "implementation": {
+                        "type": "implementation-record",
+                        "formats": ["ars.implementation@1"],
+                        "required": False,
+                    }
+                },
+                "outputs": {
+                    "review": {
+                        "type": "review-record",
+                        "formats": ["ars.review@1"],
+                        "required": True,
+                    }
+                },
+                "side_effects": ["review-record-write", "local-checkpoint"],
             },
-            "verify": {"contract": 1, "executor": "verify", "supports": {}},
+            "verify": {
+                "contract": 1,
+                "executor": "verify",
+                "supports": {},
+                "inputs": {
+                    "review": {
+                        "type": "review-record",
+                        "formats": ["ars.review@1"],
+                        "required": False,
+                    }
+                },
+                "outputs": {
+                    "verification": {
+                        "type": "verification-record",
+                        "formats": ["ars.verification@1"],
+                        "required": True,
+                    }
+                },
+                "side_effects": ["behavior-verification", "verification-record-write"],
+            },
         },
         "workflow_templates": {
             "reviewed": {
                 "description": "默认工程修改",
                 "tasks": {
-                    "implement": {"capability": "implement", "depends_on": []},
+                    "implement": {
+                        "capability": "implement",
+                        "depends_on": [],
+                        "inputs": {},
+                    },
                     "review": {
                         "capability": "review",
                         "depends_on": ["implement"],
+                        "inputs": {
+                            "implementation": "implement.implementation"
+                        },
                     },
                 },
             },
             "verified": {
                 "description": "包含实际行为验收",
                 "tasks": {
-                    "implement": {"capability": "implement", "depends_on": []},
+                    "implement": {
+                        "capability": "implement",
+                        "depends_on": [],
+                        "inputs": {},
+                    },
                     "review": {
                         "capability": "review",
                         "depends_on": ["implement"],
+                        "inputs": {
+                            "implementation": "implement.implementation"
+                        },
                     },
                     "verify": {
                         "capability": "verify",
                         "depends_on": ["review"],
+                        "inputs": {"review": "review.review"},
                     },
                 },
             },
@@ -104,6 +175,7 @@ class RegistryTests(unittest.TestCase):
         tasks["second-implement"] = {
             "capability": "implement",
             "depends_on": [],
+            "inputs": {},
         }
         tasks["review"]["depends_on"].append("second-implement")
         self.module.validate_registry(value)
@@ -113,6 +185,7 @@ class RegistryTests(unittest.TestCase):
         value["workflow_templates"]["reviewed"]["tasks"]["repair"] = {
             "capability": "fix",
             "depends_on": ["review"],
+            "inputs": {},
         }
         with self.assertRaisesRegex(self.module.RegistryError, "recovery capability"):
             self.module.validate_registry(value)
@@ -121,6 +194,20 @@ class RegistryTests(unittest.TestCase):
             "depends_on"
         ] = ["review"]
         with self.assertRaisesRegex(self.module.RegistryError, "dependency cycle"):
+            self.module.validate_registry(value)
+
+    def test_workflow_rejects_incompatible_or_implicit_artifact_flow(self) -> None:
+        value = registry_input()
+        review = value["workflow_templates"]["reviewed"]["tasks"]["review"]
+        review["inputs"]["implementation"] = "missing.implementation"
+        with self.assertRaisesRegex(self.module.RegistryError, "unknown task"):
+            self.module.validate_registry(value)
+
+        value = registry_input()
+        value["capabilities"]["review"]["inputs"]["implementation"]["formats"] = [
+            "foreign.change@1"
+        ]
+        with self.assertRaisesRegex(self.module.RegistryError, "adapter task"):
             self.module.validate_registry(value)
 
 

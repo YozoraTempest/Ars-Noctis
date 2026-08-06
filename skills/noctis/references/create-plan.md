@@ -10,7 +10,9 @@
 
 ## 解析能力
 
-读取 `Noctis/registry.yaml`，从 Workflow Template 展开 Task 图。同一 capability 可以出现多次。为每个 Task 固化 contract、executor provider、support provider/激活时机和记录路径；不读取 provider 的 `SKILL.md`。
+读取 `Noctis/registry.yaml`，从 Workflow Template 展开 Task 图。同一 capability 可以出现多次。为每个 Task 固化 contract、executor provider、support provider/激活时机、Artifact Binding 和记录路径；不读取 provider 的 `SKILL.md`。
+
+输入只绑定直接依赖的输出，或绑定用户明确提供的外部 ArtifactRef。类型必须相同且格式必须有交集；否则增加显式 Adapter Task。不要在计划或 Exec 中安排隐藏格式转换。
 
 没有注册表、provider 不唯一、contract 不兼容或记录路径冲突时展示事实并确认处理，不按路径顺序猜测。
 
@@ -19,7 +21,7 @@
 使用以下顶层 Interface：
 
 ```yaml
-version: 1
+version: 2
 root: Noctis/<domain>/<level>/<id>/noctis.md
 records:
   - level: task | unit | work
@@ -35,7 +37,7 @@ authority:
   forbidden: []
 ```
 
-Task 再包含 capability、binding 和 record。Unit 再包含 workflowTemplate、tracks 和 tasks。Work 再包含 units；Work 中每个 Unit path 必须指向计划内对应 Unit 记录。
+Task 再包含 capability、binding、artifactBinding 和 record。artifactBinding 固化 input 的 source/type/formats/required，以及 output 的 type/formats/required。Unit 再包含 workflowTemplate、tracks 和 tasks。Work 再包含 units；Work 中每个 Unit path 必须指向计划内对应 Unit 记录。
 
 ## 启动确认
 
@@ -43,7 +45,7 @@ Task 再包含 capability、binding 和 record。Unit 再包含 workflowTemplate
 
 - 层级、根记录和目标；
 - Work 的 Unit 顺序，或 Unit 的 Task 图与并行组；
-- 每个 Task 的 capability、Track、executor、support 和记录文件；
+- 每个 Task 的 capability、Track、executor、support、Artifact 输入输出和记录文件；
 - 完成条件，以及测试、提交、推送、部署和外部写入授权。
 
 用户选择调整时重新生成并展示完整计划。确认后把 ExecutionPlan 原样交给 `noctis-exec`；Noctis 不调用状态脚本。

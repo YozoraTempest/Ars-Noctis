@@ -1,0 +1,26 @@
+version: 1
+kind: ars
+name: transform-data
+role: executor
+state:
+  mode: stateless
+capabilities:
+  - id: transform-data
+    contract: 1
+    inputs:
+      source:
+        type: dataset
+        formats:
+          - tabular.csv@1
+        required: true
+    outputs:
+      result:
+        type: dataset
+        formats:
+          - tabular.normalized@1
+        required: true
+    side_effects:
+      - filesystem-write
+supports: []
+documents: []
+augmentations: []

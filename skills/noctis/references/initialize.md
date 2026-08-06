@@ -8,16 +8,19 @@
 
 ## 发现能力
 
-从平台当前可用 Skill 目录读取名称、描述和 locator，再只读取候选 Skill 同级的 `noctis.yaml`。不要读取候选 `SKILL.md` 来发现能力。
+从平台当前可用 Skill 目录读取名称、描述和 locator，再只读取候选 Skill 同级的 `ars.yaml`。不要读取候选 `SKILL.md` 来发现能力。
+
+先使用 `ars` 的公开 validate 工具校验候选目录；只对返回 `native` 且有效的 Ars 继续规范化。不要复制 Ars schema 或在 Noctis 中维护第二套 manifest 校验器。
 
 规范化以下信息：
 
 - executor 与它提供的 capability/contract；
+- capability 的 input/output Artifact port 和 side effects；
 - support 与 contract、激活时机；
 - 文档、模板、工具与 augmentation；
-- Workflow Template 的 Task、capability 与依赖。
+- Workflow Template 的 Task、capability、依赖与 input/output 绑定。
 
-manifest 不完整、资源路径逃逸 Skill 目录或 contract 不兼容时排除候选并说明原因。同一 capability/support 有多个 provider 时展示全部有效选择，不按路径顺序暗中决定。没有 manifest 的第三方 Skill 仅在用户提供手工映射后注册。
+manifest 不完整、资源路径逃逸 Ars 目录或 contract 不兼容时排除候选并说明原因。同一 capability/support 有多个 provider 时展示全部有效选择，不按路径顺序暗中决定。没有 manifest 的外部 Skill 应先使用 `to-ars`；临时使用时只能由用户提供手工映射。
 
 ## 写入注册表
 

@@ -1,0 +1,20 @@
+version: 1
+kind: ars
+name: noctis
+role: executor
+state:
+  mode: stateless
+capabilities:
+  - id: plan-workflow
+    contract: 1
+    inputs: {}
+    outputs:
+      execution-plan:
+        type: execution-plan
+        formats:
+          - noctis.execution-plan@2
+        required: true
+    side_effects: []
+supports: []
+documents: []
+augmentations: []

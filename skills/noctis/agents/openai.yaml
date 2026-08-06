@@ -1,7 +1,7 @@
 interface:
   display_name: "Noctis"
-  short_description: "规划 Task、Unit 或 Work，并生成已确认的执行计划"
-  default_prompt: "使用 $noctis 选择最小工作层级，确认依赖与授权，并生成 ExecutionPlan。"
+  short_description: "编排原生 Ars、Artifact 与 Task 依赖并生成执行计划"
+  default_prompt: "使用 $noctis 选择最小工作层级，确认 Ars、Artifact、依赖与授权，并生成 ExecutionPlan。"
 
 policy:
   allow_implicit_invocation: false

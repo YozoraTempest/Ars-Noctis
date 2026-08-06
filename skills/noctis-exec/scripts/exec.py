@@ -15,6 +15,9 @@ from typing import Any, Iterator
 
 
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+ARTIFACT_FORMAT = re.compile(
+    r"^[a-z0-9]+(?:[.-][a-z0-9]+)*@[1-9][0-9]*$"
+)
 ITEM_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 EXTENSION_ID = re.compile(
     r"^[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$"
@@ -425,6 +428,157 @@ def _record(value: Any, context: str) -> dict[str, str] | None:
     }
 
 
+def _artifact_format(value: Any, context: str) -> str:
+    value = _non_empty(value, context)
+    if not ARTIFACT_FORMAT.fullmatch(value):
+        raise NoctisError(f"{context} must be a versioned artifact format")
+    return value
+
+
+def _artifact_port(value: Any, context: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise NoctisError(f"{context} must be an object")
+    _exact_keys(value, {"type", "formats", "required"}, context)
+    formats = _string_list(value["formats"], f"{context}.formats", required=True)
+    normalized_formats = [
+        _artifact_format(item, f"{context}.formats item") for item in formats
+    ]
+    required = value["required"]
+    if not isinstance(required, bool):
+        raise NoctisError(f"{context}.required must be a boolean")
+    return {
+        "type": _identifier(value["type"], f"{context}.type"),
+        "formats": normalized_formats,
+        "required": required,
+    }
+
+
+def _artifact_ref(
+    value: Any,
+    context: str,
+    *,
+    expected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise NoctisError(f"{context} must be an object")
+    _exact_keys(value, {"type", "format", "location", "revision"}, context)
+    normalized = {
+        "type": _identifier(value["type"], f"{context}.type"),
+        "format": _artifact_format(value["format"], f"{context}.format"),
+        "location": _non_empty(value["location"], f"{context}.location"),
+        "revision": value["revision"],
+    }
+    revision = normalized["revision"]
+    if revision is not None:
+        normalized["revision"] = _non_empty(revision, f"{context}.revision")
+    if expected is not None:
+        if normalized["type"] != expected["type"]:
+            raise NoctisError(f"{context}.type does not match its artifact port")
+        if normalized["format"] not in expected["formats"]:
+            raise NoctisError(f"{context}.format does not match its artifact port")
+    return normalized
+
+
+def _artifact_binding(value: Any, context: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise NoctisError(f"{context} must be an object")
+    _exact_keys(value, {"inputs", "outputs"}, context)
+    inputs = value["inputs"]
+    outputs = value["outputs"]
+    if not isinstance(inputs, dict) or not isinstance(outputs, dict):
+        raise NoctisError(f"{context}.inputs and outputs must be objects")
+
+    normalized_inputs: dict[str, Any] = {}
+    for input_id, raw in inputs.items():
+        input_id = _identifier(input_id, f"{context} input id")
+        if not isinstance(raw, dict):
+            raise NoctisError(f"{context}.inputs.{input_id} must be an object")
+        _exact_keys(
+            raw,
+            {"type", "formats", "required", "source"},
+            f"{context}.inputs.{input_id}",
+        )
+        port = _artifact_port(
+            {key: raw[key] for key in ("type", "formats", "required")},
+            f"{context}.inputs.{input_id}",
+        )
+        source = raw["source"]
+        if source is None:
+            if port["required"]:
+                raise NoctisError(
+                    f"{context}.inputs.{input_id}.source is required"
+                )
+        elif not isinstance(source, dict):
+            raise NoctisError(
+                f"{context}.inputs.{input_id}.source must be null or an object"
+            )
+        elif set(source) == {"task", "output"}:
+            source = {
+                "task": _item_id(
+                    source["task"], f"{context}.inputs.{input_id}.source.task"
+                ),
+                "output": _identifier(
+                    source["output"],
+                    f"{context}.inputs.{input_id}.source.output",
+                ),
+            }
+        elif set(source) == {"artifact"}:
+            source = {
+                "artifact": _artifact_ref(
+                    source["artifact"],
+                    f"{context}.inputs.{input_id}.source.artifact",
+                    expected=port,
+                )
+            }
+        else:
+            raise NoctisError(
+                f"{context}.inputs.{input_id}.source must reference a Task output "
+                "or contain one artifact"
+            )
+        normalized_inputs[input_id] = {**port, "source": source}
+
+    normalized_outputs: dict[str, Any] = {}
+    for output_id, raw in outputs.items():
+        output_id = _identifier(output_id, f"{context} output id")
+        normalized_outputs[output_id] = _artifact_port(
+            raw, f"{context}.outputs.{output_id}"
+        )
+    return {"inputs": normalized_inputs, "outputs": normalized_outputs}
+
+
+def _artifact_results(
+    value: Any,
+    binding: dict[str, Any],
+    context: str,
+    *,
+    require_outputs: bool,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise NoctisError(f"{context} must be an object")
+    outputs = binding["outputs"]
+    unknown = sorted(set(value) - set(outputs))
+    if unknown:
+        raise NoctisError(f"{context} contains unknown outputs: " + ", ".join(unknown))
+    if require_outputs:
+        missing = sorted(
+            output_id
+            for output_id, port in outputs.items()
+            if port["required"] and output_id not in value
+        )
+        if missing:
+            raise NoctisError(
+                f"{context} is missing required outputs: " + ", ".join(missing)
+            )
+    return {
+        output_id: _artifact_ref(
+            artifact,
+            f"{context}.{output_id}",
+            expected=outputs[output_id],
+        )
+        for output_id, artifact in value.items()
+    }
+
+
 def _depends_on(value: Any, context: str) -> list[str]:
     if not isinstance(value, list):
         raise NoctisError(f"{context} must be a list")
@@ -494,6 +648,7 @@ def _normalize_tasks(
                 "track",
                 "dependsOn",
                 "binding",
+                "artifactBinding",
                 "record",
             },
             context,
@@ -512,6 +667,10 @@ def _normalize_tasks(
             if track not in tracks:
                 raise NoctisError(f"{context}.track references unknown track '{track}'")
         items[task_id] = {
+            "artifact_binding": _artifact_binding(
+                raw["artifactBinding"], f"{context}.artifactBinding"
+            ),
+            "artifacts": {},
             "binding": _binding(raw["binding"], f"{context}.binding"),
             "capability": capability,
             "depends_on": _depends_on(raw["dependsOn"], f"{context}.dependsOn"),
@@ -581,6 +740,8 @@ def _validate_graph(items: Any, level: str) -> dict[str, Any]:
                 "depends_on",
                 "status",
                 "outcome",
+                "artifact_binding",
+                "artifacts",
                 "binding",
                 "record",
             }
@@ -615,8 +776,53 @@ def _validate_graph(items: Any, level: str) -> dict[str, Any]:
                 item["capability"], f"unit task '{item_id}'.capability"
             )
             _binding(item["binding"], f"unit task '{item_id}'.binding")
+            artifact_binding = _artifact_binding(
+                item["artifact_binding"],
+                f"unit task '{item_id}'.artifact_binding",
+            )
+            _artifact_results(
+                item["artifacts"],
+                artifact_binding,
+                f"unit task '{item_id}'.artifacts",
+                require_outputs=status == "completed",
+            )
             _record(item["record"], f"unit task '{item_id}'.record")
     _validate_dag(items)
+    if level != "work":
+        for item_id, item in items.items():
+            for input_id, port in item["artifact_binding"]["inputs"].items():
+                source = port["source"]
+                if source is None or "artifact" in source:
+                    continue
+                source_task = source["task"]
+                source_output = source["output"]
+                if source_task not in items:
+                    raise NoctisError(
+                        f"unit task '{item_id}' input '{input_id}' references "
+                        f"unknown task '{source_task}'"
+                    )
+                if source_task not in item["depends_on"]:
+                    raise NoctisError(
+                        f"unit task '{item_id}' input '{input_id}' must reference "
+                        "a direct dependency"
+                    )
+                source_outputs = items[source_task]["artifact_binding"]["outputs"]
+                if source_output not in source_outputs:
+                    raise NoctisError(
+                        f"unit task '{item_id}' input '{input_id}' references "
+                        f"unknown output '{source_task}.{source_output}'"
+                    )
+                output_port = source_outputs[source_output]
+                if output_port["type"] != port["type"]:
+                    raise NoctisError(
+                        f"unit task '{item_id}' input '{input_id}' has "
+                        "incompatible artifact types"
+                    )
+                if not set(output_port["formats"]) & set(port["formats"]):
+                    raise NoctisError(
+                        f"unit task '{item_id}' input '{input_id}' requires "
+                        "an explicit adapter Task"
+                    )
     for item_id, item in items.items():
         if item["status"] == "active":
             unfinished = [
@@ -640,8 +846,8 @@ def _validate_orchestration(metadata: dict[str, Any]) -> dict[str, Any]:
     if level not in VALID_LEVELS:
         raise NoctisError("orchestration level must be task, unit, or work")
     expected_template = {
-        "task": "noctis/task@1",
-        "unit": "noctis/unit@2",
+        "task": "noctis/task@2",
+        "unit": "noctis/unit@3",
         "work": "noctis/work@2",
     }[level]
     if metadata["template"] != expected_template:
@@ -736,6 +942,15 @@ def _table_cell(value: Any) -> str:
     return str(value).replace("|", "\\|").replace("\n", " ")
 
 
+def _artifact_summary(value: dict[str, Any]) -> str:
+    if not value:
+        return "-"
+    return ", ".join(
+        f"{artifact_id}={artifact['location']}"
+        for artifact_id, artifact in sorted(value.items())
+    )
+
+
 def _markdown_list(values: list[str], empty: str) -> str:
     return "\n".join(f"- {value}" for value in values) if values else f"- {empty}"
 
@@ -799,8 +1014,8 @@ def _render_orchestration_body(
         replacements["{{items}}"] = "\n".join(rows)
     else:
         task_rows = [
-            "| ID | Task | Capability | Track | Depends on | Status | Outcome |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
+            "| ID | Task | Capability | Track | Depends on | Status | Outcome | Artifacts |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for task_id in _topological_order(items):
             task = items[task_id]
@@ -816,6 +1031,7 @@ def _render_orchestration_body(
                         task["depends_on"],
                         task["status"],
                         task["outcome"],
+                        _artifact_summary(task["artifacts"]),
                     )
                 )
                 + " |"
@@ -931,7 +1147,7 @@ def create_orchestration(args: argparse.Namespace) -> dict[str, Any]:
         items = _normalize_tasks(payload["tasks"], tracks, allow_fix=False)
         metadata = {
             "document": "noctis",
-            "template": "noctis/unit@2",
+            "template": "noctis/unit@3",
             "revision": 1,
             "level": "unit",
             "id": _item_id(payload["id"], "input.id"),
@@ -961,6 +1177,7 @@ def create_orchestration(args: argparse.Namespace) -> dict[str, Any]:
                 "authority",
                 "capability",
                 "binding",
+                "artifactBinding",
                 "record",
             },
             "input",
@@ -976,6 +1193,7 @@ def create_orchestration(args: argparse.Namespace) -> dict[str, Any]:
                     "track": None,
                     "dependsOn": [],
                     "binding": payload["binding"],
+                    "artifactBinding": payload["artifactBinding"],
                     "record": payload["record"],
                 }
             ],
@@ -984,7 +1202,7 @@ def create_orchestration(args: argparse.Namespace) -> dict[str, Any]:
         )
         metadata = {
             "document": "noctis",
-            "template": "noctis/task@1",
+            "template": "noctis/task@2",
             "revision": 1,
             "level": "task",
             "id": task_id,
@@ -1056,6 +1274,39 @@ def inspect_orchestration(args: argparse.Namespace) -> dict[str, Any] | str:
     }
 
 
+def _resolved_inputs(
+    items: dict[str, Any], item_id: str
+) -> tuple[dict[str, Any], list[str]]:
+    item = items[item_id]
+    if "artifact_binding" not in item:
+        return {}, []
+    resolved: dict[str, Any] = {}
+    unresolved: list[str] = []
+    for input_id, port in item["artifact_binding"]["inputs"].items():
+        source = port["source"]
+        artifact: dict[str, Any] | None = None
+        if source is not None and "artifact" in source:
+            artifact = source["artifact"]
+            resolved_source: dict[str, Any] = {"external": True}
+        elif source is not None:
+            source_task = items[source["task"]]
+            artifact = source_task["artifacts"].get(source["output"])
+            resolved_source = {
+                "task": source["task"],
+                "output": source["output"],
+                "provider": source_task["binding"]["executor"]["provider"],
+                "record": source_task["record"],
+            }
+        if artifact is not None:
+            resolved[input_id] = {
+                "artifact": artifact,
+                "source": resolved_source,
+            }
+        elif port["required"]:
+            unresolved.append(input_id)
+    return resolved, sorted(unresolved)
+
+
 def mutate_item_status(args: argparse.Namespace) -> dict[str, Any]:
     path = _orchestration_path(args.path)
     with _document_lock(path):
@@ -1096,11 +1347,31 @@ def mutate_item_status(args: argparse.Namespace) -> dict[str, Any]:
                     f"item '{item_id}' has unfinished dependencies: "
                     + ", ".join(unfinished)
                 )
+            _, unresolved = _resolved_inputs(metadata["items"], item_id)
+            if unresolved:
+                raise NoctisError(
+                    f"item '{item_id}' has unresolved required inputs: "
+                    + ", ".join(unresolved)
+                )
             item["status"] = "active"
             item["outcome"] = None
+            if "artifacts" in item:
+                item["artifacts"] = {}
         else:
             item["status"] = args.to_status
             item["outcome"] = _non_empty(args.outcome, "outcome")
+            if "artifact_binding" in item:
+                raw_artifacts = (
+                    _load_json(args.artifacts) if args.artifacts is not None else {}
+                )
+                item["artifacts"] = _artifact_results(
+                    raw_artifacts,
+                    item["artifact_binding"],
+                    "artifacts",
+                    require_outputs=args.to_status == "completed",
+                )
+            elif args.artifacts is not None:
+                raise NoctisError("Work items cannot publish Task artifacts")
         metadata["revision"] += 1
         _write_orchestration(path, metadata, notes=_notes(body))
     return {
@@ -1109,6 +1380,7 @@ def mutate_item_status(args: argparse.Namespace) -> dict[str, Any]:
         "id": item_id,
         "itemStatus": item["status"],
         "orchestrationStatus": metadata["status"],
+        "artifacts": item.get("artifacts", {}),
         "revision": metadata["revision"],
         "ready": _ready_items(metadata["items"]),
     }
@@ -1129,7 +1401,11 @@ def _ancestors(item_id: str, items: dict[str, Any]) -> set[str]:
 def splice_tasks(args: argparse.Namespace) -> dict[str, Any]:
     path = _orchestration_path(args.path)
     payload = _load_json(args.input)
-    _exact_keys(payload, {"sourceOutcome", "tasks", "tail"}, "input")
+    _exact_keys(
+        payload,
+        {"sourceOutcome", "sourceArtifacts", "tasks", "tail"},
+        "input",
+    )
     with _document_lock(path):
         path, metadata, body = _load_orchestration(path)
         if metadata["level"] != "unit":
@@ -1202,6 +1478,12 @@ def splice_tasks(args: argparse.Namespace) -> dict[str, Any]:
             ]
         source["status"] = "completed"
         source["outcome"] = _non_empty(payload["sourceOutcome"], "input.sourceOutcome")
+        source["artifacts"] = _artifact_results(
+            payload["sourceArtifacts"],
+            source["artifact_binding"],
+            "input.sourceArtifacts",
+            require_outputs=True,
+        )
         metadata["items"].update(new_items)
         metadata["revision"] += 1
         _write_orchestration(path, metadata, notes=_notes(body))
@@ -1313,12 +1595,20 @@ def _entry_context(
                 "id": dependency,
                 "status": items[dependency]["status"],
                 "outcome": items[dependency]["outcome"],
+                "artifacts": items[dependency].get("artifacts", {}),
             }
             for dependency in item["depends_on"]
         ]
-        target = {"id": item_id, "item": item, "predecessors": predecessors}
+        resolved_inputs, unresolved_inputs = _resolved_inputs(items, item_id)
+        target = {
+            "id": item_id,
+            "item": item,
+            "predecessors": predecessors,
+            "resolvedInputs": resolved_inputs,
+            "unresolvedInputs": unresolved_inputs,
+        }
     return {
-        "version": 1,
+        "version": 2,
         "projectRoot": str(root),
         "record": str(path),
         "expectedRevision": metadata["revision"],
@@ -1702,6 +1992,9 @@ def parse_args() -> argparse.Namespace:
         "--to-status", choices=("completed", "blocked"), required=True
     )
     finish.add_argument("--outcome", required=True)
+    finish.add_argument(
+        "--artifacts", help="Artifact JSON file, or '-' for standard input."
+    )
     finish.add_argument("--expected-revision", type=int, required=True)
 
     splice = actions.add_parser("splice")

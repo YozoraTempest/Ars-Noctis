@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ars"
+  short_description: "创建、检查并验证可由 Noctis 编排的原生 Ars Skill"
+  default_prompt: "使用 $ars 创建并验证一个可被 Noctis 原生编排的 Ars Skill。"

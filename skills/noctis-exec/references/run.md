@@ -6,7 +6,7 @@
 
 按记录状态处理：
 
-- `pending` 且 ready：用 `start` 原子领取。
+- `pending` 且 ready：确认 required input 已解析，再用 `start` 原子领取。
 - `active`：读取该 Task 的能力记录和目标工作树，继续尚未完成的 Step；提交或外部副作用是否发生不确定时阻塞，不盲目重放。
 - `blocked`：只在阻塞条件有证据解除后用 `resume`。
 - `completed`：不再执行。
@@ -21,8 +21,9 @@ Task 记录直接调度其唯一 Task。Unit 从 ready 中选择依赖已完成�
 
 1. 激活 binding 中 `before` support。
 2. 通过平台 Skill 机制激活 executor；`on-request` support 仅在 executor 实际需要时激活。
-3. 使用 Task `record.path` 调用所属 Skill 的文档工具。
-4. executor 返回后重新 inspect；根据事实用 `finish` 写入 `completed` 或 `blocked` 及 outcome。
+3. 把 ExecutionEntry v2 的 `resolvedInputs` 交给 executor；文档型输入通过来源 provider 和 record 句柄读取，不直接改写原生 Markdown。
+4. 使用 Task `record.path` 调用所属 Ars 的文档工具。
+5. executor 返回后重新 inspect；根据事实用 `finish --artifacts` 写入 `completed` 或 `blocked`、outcome 和 ArtifactRef。completed 时缺少 required output 必须失败。
 
 不要读取项目注册表替换既有 Task 快照，也不要直接打开其他 Skill 的 `SKILL.md`。
 

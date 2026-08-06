@@ -1,10 +1,10 @@
 # 启动执行计划
 
-只接收 Noctis 已经展示并由用户确认的 ExecutionPlan。缺少确认、目标、完成条件、授权或 Task binding 时返回 `replan-required`，不要在 Exec 内补规划。
+只接收 Noctis 已经展示并由用户确认的 ExecutionPlan v2。缺少确认、目标、完成条件、授权、Task binding 或 Artifact Binding 时返回 `replan-required`，不要在 Exec 内补规划。
 
 ## 校验计划
 
-要求顶层只包含 `version: 1`、根记录 `root` 和非空 `records`。每条记录只包含：
+要求顶层只包含 `version: 2`、根记录 `root` 和非空 `records`。每条记录只包含：
 
 - `level`：`task`、`unit` 或 `work`；
 - 相对项目根的 `path`；
