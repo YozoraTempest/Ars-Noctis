@@ -23,26 +23,47 @@ Ars-Noctis/
 
 ## Noctis 编排
 
-Noctis 是可选编排器，不是原子 Skill 的运行前提。它按 stage 组合 executor 与 support，并在目标项目中维护：
+Noctis 是可选规划与执行工具包，不是原子 Skill 的运行前提：
+
+- `noctis` 选择 Task、Unit 或 Work，确认依赖、完成条件与授权并生成 ExecutionPlan。
+- `noctis-exec` 创建和推进结构化生命周期，调度计划中固化的 executor/support。
+- `noctis-continue` 在断点、换对话、换模型或换 Agent 后重建最小入口并交回 Exec。
+
+目标项目中的持久化结构为：
 
 ```text
 <project-root>/
 └── Noctis/
     ├── registry.yaml
-    └── <domain>/tasks/<task>/
-        ├── tasks.md
-        ├── implementation.md
-        ├── review.md
-        ├── scenarios.md
-        └── verification.md
+    └── <domain>/
+        ├── tasks/<task-id>/                 # 可恢复单 Task 模式
+        │   ├── noctis.md
+        │   └── <record>.md
+        ├── units/<unit-id>/                 # 单 Unit 模式
+        │   ├── noctis.md
+        │   ├── scenarios.md
+        │   └── tracks/<track-id>/
+        └── work/<work-id>/                  # 多 Unit 模式
+            ├── noctis.md
+            └── units/<unit-id>/
+                ├── noctis.md
+                ├── scenarios.md
+                └── tracks/<track-id>/
+                    ├── implementation.md
+                    ├── review.md
+                    ├── verification.md
+                    └── evidence/
 ```
 
+- Work 编排通常串行的 Unit；Unit 表示一个需求的完整实现，并用 Task 依赖图表达跨项目并行与集成汇合。
+- Track 只是按项目或集成范围组织文件的可选分组，不具有状态；Step 由原子 Skill 在 Task 内部维护。
 - `$noctis init` 从可用 Skill 的 `noctis.yaml` 生成项目级注册表；不同内容不会静默覆盖。
-- `$noctis preset=reviewed` 等数据式调用按 stage 渐进加载能力。
-- `$noctis $implement $code-review` 可提前显式加载能力，但仍执行任务定位、交互确认、快照与阶段守卫。
-- `$implement`、`$code-review` 和 `$verify` 仍可独立调用，不会隐式注入其他阶段。
+- `$noctis workflow=reviewed` 等数据式调用只生成确认后的 ExecutionPlan，再交给 Exec。
+- `$noctis $implement $code-review` 可提前显式加载能力，但仍需确认层级、Task 图和授权。
+- `$noctis continue` 或 `$noctis-continue` 从当前项目唯一未完成根记录进入 Exec；多个候选必须选择。
+- `$implement`、`$code-review` 和 `$verify` 仍可独立调用且不创建 `noctis.md`；只有经 Noctis/Exec 启动的单 Task 才持久化。
 
-任务文档由所属 Skill 的脚本创建和更新。`revision` 提供并发保护，稳定 slot/item 允许 Noctis 在启用新能力时持久扩展已有文档，而不修改源模板或覆盖其他能力的内容。
+执行记录与能力文档都由脚本创建和更新。`revision` 提供并发保护，稳定 slot/item 允许 Exec 在启用新能力时持久扩展已有文档，而不修改源模板或覆盖其他能力的内容。
 
 ## 生命周期
 
@@ -56,7 +77,9 @@ Noctis 是可选编排器，不是原子 Skill 的运行前提。它按 stage �
 
 | Skill | 目标 | 状态 |
 | --- | --- | --- |
-| `noctis` | 按项目注册表编排 stage、support、父子任务和恢复队列 | 可用 |
-| `implement` | 按 Task/Subtask 实施功能或集中修复，并维护独立实现记录 | 可用 |
-| `code-review` | 对精确提交范围执行静态审查和一次定向修复复核 | 可用 |
-| `verify` | 按确认场景执行人工、AI 或辅助式行为验收 | 可用 |
+| `noctis` | 规划 Work、Unit、Task 依赖图并生成 ExecutionPlan | 可用 |
+| `noctis-exec` | 管理执行生命周期、状态、恢复与文档扩展 | 可用 |
+| `noctis-continue` | 在无上下文时恢复执行入口并交给 Exec | 可用 |
+| `implement` | 执行 Implement/Fix Task，并维护内部 Step 与提交记录 | 可用 |
+| `code-review` | 对 Task 精确提交执行静态审查和定向修复复核 | 可用 |
+| `verify` | 按 Unit 场景执行人工、AI 或辅助式行为验收 | 可用 |

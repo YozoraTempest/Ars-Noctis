@@ -34,14 +34,19 @@
 
 ## Noctis 注册
 
-- 仓库不维护中心运行时注册表。每个原子 Skill 用同级 `noctis.yaml` 自注册；Noctis 的 stage/support contract 与示例保存在 `noctis/assets/`。
+- 仓库不维护中心运行时注册表。每个原子 Skill 用同级 `noctis.yaml` 自注册；Noctis 的 capability/support contract 与示例保存在 `noctis/assets/`。
 - `$noctis init` 根据当前可用 manifest 和用户选择，在目标项目生成 `Noctis/registry.yaml`。已有内容不同时必须先展示差异并再次确认，禁止静默覆盖。
-- 同一 stage/support 发现多个 provider 时保留选择，不通过路径顺序暗中决定。没有 manifest 的第三方 Skill 只能由用户提供手工映射。
-- `fix` 是恢复 stage，不得加入正常 preset。任务创建时把 stage contract、executor、support 及 provider 固化到 `tasks.md` 快照；恢复任务默认沿用快照。
+- 同一 capability/support 发现多个 provider 时保留选择，不通过路径顺序暗中决定。没有 manifest 的第三方 Skill 只能由用户提供手工映射。
+- Workflow Template 声明 Task capability 与依赖图，允许多个 Task 使用同一 capability。`fix` 只允许在异常时动态插入，不得加入正常模板。
+- Unit 创建时把每个 Task 的 capability contract、executor、support、provider 和记录路径固化到 `noctis.md`；恢复默认沿用快照。
 
-## 结构化任务文档
+## 结构化编排文档
 
-- `tasks.md` 由 `noctis/scripts/noctis.py` 管理；各原子 Skill 独立携带自己的模板和 `create/read/update/append` 文档脚本。
+- Task、Unit 与 Work 的 `noctis.md` 由 `noctis-exec/scripts/exec.py` 管理；Noctis 只生成已确认的 ExecutionPlan，Noctis Continue 只生成只读 ExecutionEntry。各原子 Skill 独立携带自己的模板和 `create/read/update/append` 文档脚本。
+- Work 只编排 Unit，Unit 只编排 Task，Task 内 Step 由执行 Skill 管理。Track 仅用于物理分组，不维护生命周期状态。
+- Unit 的 Task 使用依赖图表达并行与串行汇合。异常流程以新的 Task 原子插入，并只重接尚未开始的后继；不得维护全局 stage 或 resume 队列。
 - 文档 frontmatter 保持最小，只放 document、template、revision 及确有必要的任务状态。所有写入使用 revision 比较和原子替换。
 - 可扩展位置使用稳定 `noctis:slot`、`noctis:collection` 和 `noctis:item` 标记。基础工具只更新自己拥有的 slot，并保留未知 extension。
-- augmentation 由 provider manifest 声明，由 Noctis 在对应 workflow 实际启用时通过脚本持久插入；不得预改源模板或直接字符串拼接生成任务状态。
+- augmentation 由 provider manifest 声明，由 Noctis Exec 在对应 Task 实际启用时通过脚本持久插入；不得预改源模板或直接字符串拼接生成任务状态。
+- 只有经 Noctis/Exec 启动的单 Task 才在 `Noctis/<domain>/tasks/<task-id>/` 持久化；独立调用原子 Skill 不注入编排记录。
+- Continue 不区分断点、模型、Agent 或对话来源；它按当前项目局部扫描恢复最小上下文，所有状态判断仍由 Exec 完成。
