@@ -1,60 +1,61 @@
 ---
 name: implement
-description: 按明确的工程请求或 Noctis 任务逐项实施，维护轻量执行记录，并为每个完成任务创建本地检查点提交。仅在用户明确调用并要求实施、任务跟踪和提交时使用；不隐含规划、测试、评审、推送或部署。
+description: 按明确工程请求或 Noctis Task/Subtask 实施功能，并处理用户已确认的审查或验证修复，维护轻量执行记录和本地检查点提交。仅在用户显式调用实现、修复或显式 workflow 包含 implement 时使用；不负责规划细节、代码审查、测试、行为验证、推送或部署。
 ---
 
 # 实施
 
-每次只实施一个任务。保留工作树中的无关修改，并确保每个提交只覆盖当前任务。
+只实现功能或集中修复已确认问题。不要执行代码审查、测试或行为验收，也不要调用相应 Skill。
 
-## 从任务开始
+## 选择执行单元
 
-1. 优先使用用户提供的任务路径。否则，相对于本文件定位 `scripts/scan_tasks.py`，并使用 `--root <project-root> --status open --format json` 扫描任务。
-2. 只有一个 `open` 任务时直接使用；存在多个时展示候选任务，不要自行猜测；不存在时，在修改生产文件前，于 `Noctis/<primary-domain>/tasks/<yyyyMMdd>-<slug>/` 创建最小任务记录。
-3. 多仓库项目将 `Noctis` 放在工作区根目录，单仓库项目将其放在仓库根目录。选择对最终业务行为负责的领域作为主领域。
+优先使用用户提供的 Task 或 Subtask 路径。否则相对于本文件定位 `scripts/scan_tasks.py`，使用 `--root <project-root> --status active --format json` 扫描，并选择 `stage` 为 `implement` 或 `fix` 的唯一叶子执行单元。存在多个候选时展示候选，不要猜测。
 
-每个任务目录只包含一个 `tasks.md` 和一个 `implementation.md`：
+没有任务记录时，在修改生产文件前于 `Noctis/<primary-domain>/tasks/<yyyyMMdd>-<slug>/` 创建最小任务。仅调用 `$implement` 时 workflow 只包含 `implement`；用户显式列出多个原子 Skill 时使用该精确组合，不自行增加阶段。
 
-```text
-<task>/
-├── tasks.md
-└── implementation.md
-```
-
-在 `tasks.md` frontmatter 中仅使用 `status: open` 或 `status: completed`。`implementation.md` 仅保留 `Direction`、`Current` 和 `Completed` 三个章节。
-
-```markdown
+```yaml
 ---
-status: open
+status: active
+stage: implement
+workflow:
+  - implement
 ---
-
-## Tasks
-
-- [ ] T01 <deliverable>
 ```
 
-任务涉及多个仓库时，为每个仓库建立一个直接子任务。在父任务的 `tasks.md` 中记录各子任务、相对于项目根目录的仓库路径及其阻塞关系。无阻塞关系的任务可以独立推进，不要为此构建调度器。
+Task 表示整体业务目标，Subtask 表示仓库或独立执行边界，Step 只是执行单元内的可勾选动作。多仓库任务为每个仓库建立直接 Subtask，并在父 `tasks.md` 中记录仓库相对路径及阻塞关系。不要把 Step 当成独立提交或审查单位，也不要代替规划 Skill 扩写详细方案。
 
-```markdown
-| Subtask | Repository | Blocked by |
-| --- | --- | --- |
-| S01 | <relative-repository-path> | - |
-```
+`tasks.md` 保存目标、Subtask、依赖和 Step。`implementation.md` 只保留 `Direction`、`Current` 和 `Completed` 三个章节。修改生产文件前，在 `Direction` 和 `Current` 中记录本次执行方向；完成后在 `Completed` 中记录结果、仓库和业务提交哈希。
 
-## 实施并创建检查点
+`scenarios.md` 由规划或 verify 维护。只读取它理解目标，不得改写场景来适配实现。
 
-1. 选择第一个阻塞项均已完成且尚未勾选的任务。在修改生产文件前，将简明的执行方向和当前步骤记录到 `implementation.md`。
-2. 只实施该任务。仅当用户在本次执行中明确调用时，才使用规划、测试、评审或其他配套 Skill。
-3. 检查差异，只暂存该任务的业务修改。使用 Conventional Commits 摘要创建一个本地实现提交，并附加以下 trailer：
+## 实现功能
+
+仅在 `status: active, stage: implement` 时执行：
+
+1. 读取任务、场景、适用项目规则和相关代码，完成当前叶子执行单元的全部 Step。
+2. 保留无关工作树修改，只暂存当前执行单元的业务差异。
+3. 检查暂存差异后创建一个 Conventional Commits 本地实现提交，并附加：
 
    ```text
-   Noctis-Task: <domain>/<yyyyMMdd>-<slug>[/<subtask>]/<task-id>
+   Noctis-Task: <domain>/<yyyyMMdd>-<slug>[/<subtask>]
    ```
 
-4. 在 `tasks.md` 中勾选任务，并在 `implementation.md` 中追加简短的实现摘要和实现提交哈希；适用时在同一次修改中更新父任务文件。当目录中的全部任务均已完成后，将状态设为 `status: completed`。
-5. 只提交受影响的 Noctis 记录，使用相同的 `Noctis-Task` trailer 创建独立的本地 `docs:` 检查点提交。对于单仓库项目，实现修改和 Noctis 记录仍须在该仓库中分别提交。
-6. 继续处理下一个未被阻塞的任务，直到完成用户要求的范围或遇到真实阻塞。未经单独授权，不要推送或部署。
+4. 勾选已完成 Step，在 `implementation.md` 记录实现摘要和提交哈希。适用时同步更新父 Task 的 Subtask 进度。
+5. 按 workflow 推进：下一项为 `code-review` 时设为 `stage: review`，下一项为 `verify` 时设为 `stage: verify`，没有下一项时设为 `status: completed` 并移除 `stage`。
+6. 只提交受影响的 Noctis 记录，使用独立 `docs:` 检查点和相同 `Noctis-Task` trailer。
+
+实现阶段不得因为“顺手验证”运行测试、构建、浏览器操作或静态审查。检查差异和 Git 状态不属于测试。
+
+## 集中修复
+
+仅在 `status: active, stage: fix` 且用户已经批量确认修复范围时执行。修复来源必须是 `review.md` 中标记为 `accepted` 的 finding，或 `verification.md` 中用户明确授权修复的失败场景。
+
+不要重新判断 finding、扩展修复范围或加入防御性增强。一次处理当前批次的全部已确认项；每个受影响仓库只创建一个 `fix:` 业务提交，并在 `implementation.md` 记录提交哈希和对应 finding/scenario ID。
+
+修复后，workflow 包含 `code-review` 时推进到 `stage: review` 进行一次定向修复复核；否则，修复来自验证且 workflow 包含 `verify` 时返回 `stage: verify`。没有后续阶段时完成任务。随后创建独立 Noctis `docs:` 检查点。
 
 ## 谨慎恢复
 
-恢复任务前，读取 `tasks.md`、`implementation.md`、相关工作树以及匹配的 `Noctis-Task` 提交。原地继续尚未提交的工作；实现提交已经存在但缺少 Noctis 检查点时，先核实提交范围，再补全记录。发现证据不一致时应如实报告，不要重写历史或静默修复任务状态。
+恢复前读取 `tasks.md`、`implementation.md`、相关工作树以及匹配的 `Noctis-Task` 提交。原地继续尚未提交的工作；业务提交存在但缺少 Noctis 检查点时，先核实范围再补记录。证据不一致时设置 `status: blocked` 并报告，不要重写历史或静默修复状态。
+
+未经单独授权，不要推送、部署或执行外部业务写入。
