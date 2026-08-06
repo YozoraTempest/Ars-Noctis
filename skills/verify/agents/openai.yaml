@@ -1,0 +1,7 @@
+interface:
+  display_name: "Verify"
+  short_description: "按确认场景执行人工、AI或辅助式行为验收并记录实际证据"
+  default_prompt: "使用 $verify 为当前 Noctis 任务规划并执行已确认的行为验收。"
+
+policy:
+  allow_implicit_invocation: false
