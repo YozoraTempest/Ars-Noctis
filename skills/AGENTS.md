@@ -29,3 +29,10 @@
 - 不添加未经明确提供的图标、品牌色或其他可选元数据。
 - 完成后运行官方 `quick_validate.py`。
 - 脚本必须实际运行；复杂工作流应以真实触发语句验证误触发、漏触发和不必要的流程成本。
+
+## Noctis 注册
+
+- `noctis/registry.yaml` 是 Noctis 可执行 Skill、阶段所有权和 preset 的唯一注册表；安装清单只负责分发，不替代它。
+- 新增、重命名或删除需要由 Noctis 编排的 Skill 时，同步更新注册表。注册本身不自动加入 preset；只有语义和顺序明确时才修改 preset。
+- 注册路径必须相对于注册表且保持在 `skills/` 下。每个 stage 只能属于一个 Skill，`entry_stage` 必须包含在该 Skill 的 stages 中，preset 只能引用已注册 Skill。
+- 修改注册表后重新检查 `noctis/SKILL.md` 的选择语义，并验证所有注册路径及对应 `SKILL.md` 名称。

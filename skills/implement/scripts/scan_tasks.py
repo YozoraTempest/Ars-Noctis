@@ -11,8 +11,13 @@ from pathlib import Path
 
 
 VALID_STATUSES = ("active", "completed", "blocked")
-VALID_STAGES = ("implement", "review", "fix", "verify")
 SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def stage_filter(value: str) -> str:
+    if value == "all" or SKILL_NAME.fullmatch(value):
+        return value
+    raise argparse.ArgumentTypeError("stage must be 'all' or a lowercase skill stage")
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,7 +27,7 @@ def parse_args() -> argparse.Namespace:
         "--status", choices=("all", *VALID_STATUSES), default="all", help="Status filter."
     )
     parser.add_argument(
-        "--stage", choices=("all", *VALID_STAGES), default="all", help="Stage filter."
+        "--stage", type=stage_filter, default="all", help="Stage filter."
     )
     parser.add_argument(
         "--format", choices=("table", "json"), default="table", help="Output format."
@@ -86,9 +91,8 @@ def read_metadata(path: Path) -> dict[str, str | list[str] | None]:
     if status == "completed":
         if stage is not None:
             raise ValueError("completed task must not declare stage")
-    elif stage not in VALID_STAGES:
-        allowed = ", ".join(VALID_STAGES)
-        raise ValueError(f"active or blocked task stage must be one of: {allowed}")
+    elif not isinstance(stage, str) or not SKILL_NAME.fullmatch(stage):
+        raise ValueError("active or blocked task stage must be a lowercase skill stage")
 
     workflow = metadata.get("workflow")
     if not isinstance(workflow, list) or not workflow:

@@ -1,0 +1,42 @@
+version: 1
+default_preset: reviewed
+
+roles:
+  review: code-review
+  integration_review: code-review
+  verification: verify
+
+skills:
+  implement:
+    path: ../implement/SKILL.md
+    entry_stage: implement
+    stages:
+      - implement
+      - fix
+  code-review:
+    path: ../code-review/SKILL.md
+    entry_stage: review
+    stages:
+      - review
+  verify:
+    path: ../verify/SKILL.md
+    entry_stage: verify
+    stages:
+      - verify
+
+presets:
+  implement-only:
+    description: 只要求实现或修复
+    workflow:
+      - implement
+  reviewed:
+    description: 默认工程修改
+    workflow:
+      - implement
+      - code-review
+  verified:
+    description: 还要求实际行为验收
+    workflow:
+      - implement
+      - code-review
+      - verify

@@ -7,6 +7,16 @@ description: 按明确工程请求或 Noctis Task/Subtask 实施功能，并处�
 
 只实现功能或集中修复已确认问题。不要执行代码审查、测试或行为验收，也不要调用相应 Skill。
 
+## 阶段守卫
+
+在读取业务代码或修改文件前，先确定目标 Task 或 Subtask 及其当前状态。仅在 `status: active` 且 `stage` 为 `implement` 或 `fix` 时继续。
+
+由 `$noctis` 调度，或与其他原子 Skill 一次性显式调用时，如果当前阶段不属于本 Skill，则返回接力状态 `deferred` 并把控制权交还调用链。不要把它作为错误或完成结论告知用户，不要提问，也不要修改任务状态或文件。任务记录尚不存在时，只有 workflow 首项为 `implement` 才能由本 Skill 创建；本 Skill 不是首项时同样返回 `deferred`。
+
+单独调用本 Skill 且已有任务的阶段不匹配时，报告当前阶段和期望阶段后停止，不要代替其他 Skill 工作。
+
+Noctis 管理的多阶段 workflow 需要推进时，相对于本文件读取 `../noctis/registry.yaml`，用下一 workflow 项的 `entry_stage` 更新任务。只读取注册元数据，不读取下一 Skill；注册表缺失、注册项不一致或当前 Skill 在 workflow 中不唯一时设置 `status: blocked` 并停止。单独执行且 workflow 只有本 Skill 时不依赖注册表。
+
 ## 选择执行单元
 
 优先使用用户提供的 Task 或 Subtask 路径。否则相对于本文件定位 `scripts/scan_tasks.py`，使用 `--root <project-root> --status active --format json` 扫描，并选择 `stage` 为 `implement` 或 `fix` 的唯一叶子执行单元。存在多个候选时展示候选，不要猜测。
@@ -41,7 +51,7 @@ Task 表示整体业务目标，Subtask 表示仓库或独立执行边界，Step
    ```
 
 4. 勾选已完成 Step，在 `implementation.md` 记录实现摘要和提交哈希。适用时同步更新父 Task 的 Subtask 进度。
-5. 按 workflow 推进：下一项为 `code-review` 时设为 `stage: review`，下一项为 `verify` 时设为 `stage: verify`，没有下一项时设为 `status: completed` 并移除 `stage`。
+5. 按 workflow 推进：存在下一注册 Skill 时设为它的 `entry_stage`；没有下一项时设为 `status: completed` 并移除 `stage`。
 6. 只提交受影响的 Noctis 记录，使用独立 `docs:` 检查点和相同 `Noctis-Task` trailer。
 
 实现阶段不得因为“顺手验证”运行测试、构建、浏览器操作或静态审查。检查差异和 Git 状态不属于测试。
@@ -52,7 +62,7 @@ Task 表示整体业务目标，Subtask 表示仓库或独立执行边界，Step
 
 不要重新判断 finding、扩展修复范围或加入防御性增强。一次处理当前批次的全部已确认项；每个受影响仓库只创建一个 `fix:` 业务提交，并在 `implementation.md` 记录提交哈希和对应 finding/scenario ID。
 
-修复后，workflow 包含 `code-review` 时推进到 `stage: review` 进行一次定向修复复核；否则，修复来自验证且 workflow 包含 `verify` 时返回 `stage: verify`。没有后续阶段时完成任务。随后创建独立 Noctis `docs:` 检查点。
+修复后，来源为审查 finding 时返回注册表 `review` 角色的 `entry_stage`。来源为验证且 workflow 包含该 review Skill 时也先返回审查；否则返回 `verification` 角色的 `entry_stage`。没有可用返回阶段时完成任务。随后创建独立 Noctis `docs:` 检查点。
 
 ## 谨慎恢复
 

@@ -7,6 +7,16 @@ description: 对 Noctis Task 或 Subtask 记录的精确业务提交执行一次
 
 只审查代码并记录结论。不要修复代码、运行测试、构建应用或执行页面验收。
 
+## 阶段守卫
+
+在读取业务差异或创建审查记录前，先确定目标 Task 或 Subtask 及其当前状态。仅在 `status: active, stage: review` 时继续。
+
+由 `$noctis` 调度，或与其他原子 Skill 一次性显式调用时，如果当前阶段尚未到 `review`，则返回接力状态 `deferred` 并把控制权交还调用链。不要把它作为错误或完成结论告知用户，不要提问，也不要创建 `review.md` 或修改任务状态。任务记录尚不存在且显式 workflow 中存在更早阶段时同样返回 `deferred`。
+
+单独调用本 Skill 且任务阶段不匹配时，报告当前阶段和期望的 `review` 阶段后停止，不要代替其他 Skill 工作。
+
+Noctis 管理的多阶段 workflow 需要推进时，相对于本文件读取 `../noctis/registry.yaml`，用下一 workflow 项的 `entry_stage` 更新任务。只读取注册元数据，不读取下一 Skill；注册表缺失、注册项不一致或当前 Skill 在 workflow 中不唯一时设置 `status: blocked` 并停止。单独执行且 workflow 只有本 Skill 时不依赖注册表。
+
 ## 确定审查单元
 
 优先使用用户指定的 Task 或 Subtask。否则定位唯一满足 `status: active` 且 `stage: review` 的任务；存在多个候选时展示候选，不要猜测。
@@ -58,9 +68,9 @@ description: 对 Noctis Task 或 Subtask 记录的精确业务提交执行一次
 - Resolution: pending
 ```
 
-无 finding 时只写“未发现代码级问题”，不得声称行为验证通过。根据 workflow 推进到 `verify`；没有后续阶段时设为 `completed`。
+无 finding 时只写“未发现代码级问题”，不得声称行为验证通过。按 workflow 推进到下一注册 Skill 的 `entry_stage`；没有后续阶段时设为 `completed`。
 
-存在 finding 时保持 `status: active, stage: review`，一次性展示完整清单并等待用户批量确认。用户确认后原地标记 `accepted` 或 `rejected`；存在 accepted finding 时推进到 `fix`，全部 rejected 时按 workflow 推进。不得替用户决定或逐条触发修复。
+存在 finding 时保持 `status: active, stage: review`，一次性展示完整清单并等待用户批量确认。用户确认后原地标记 `accepted` 或 `rejected`；存在 accepted finding 时推进到 `fix`，全部 rejected 时按相同的注册 workflow 规则推进。不得替用户决定或逐条触发修复。
 
 每次初审、用户决定和修复复核结束后，只提交 `review.md` 与任务状态，使用 `docs:` 摘要和对应 `Noctis-Task` trailer。
 
@@ -68,4 +78,4 @@ description: 对 Noctis Task 或 Subtask 记录的精确业务提交执行一次
 
 存在 accepted finding 和新登记的 fix 提交时执行一次定向修复复核。逐项确认原问题是否解决，并只检查 fix diff 直接造成的回归；不得重新扫描旧代码或提出无关 finding。
 
-全部解决时更新 `Resolution: resolved`，然后进入 workflow 的下一阶段或完成。存在未解决问题或直接回归时记录证据，设置 `status: blocked, stage: review` 并停止。不要自动启动第二轮修复或复核。
+全部解决时更新 `Resolution: resolved`，然后按相同的注册 workflow 规则进入下一阶段或完成。存在未解决问题或直接回归时记录证据，设置 `status: blocked, stage: review` 并停止。不要自动启动第二轮修复或复核。

@@ -7,6 +7,16 @@ description: 根据用户确认的独立场景执行实际行为验收，按场�
 
 只验证实际行为并记录证据。不要修改业务代码、设计单元测试或把静态代码阅读描述为验收。
 
+## 阶段守卫
+
+在提出场景方案或执行任何验证前，先确定目标 Task 或 Subtask 及其当前状态。仅在 `status: active, stage: verify` 时继续。
+
+由 `$noctis` 调度，或与其他原子 Skill 一次性显式调用时，如果当前阶段尚未到 `verify`，则返回接力状态 `deferred` 并把控制权交还调用链。不要把它作为错误或完成结论告知用户，不要提问，也不要创建验证记录、操作环境或修改任务状态。任务记录尚不存在且显式 workflow 中存在更早阶段时同样返回 `deferred`。
+
+单独调用本 Skill 且任务阶段不匹配时，报告当前阶段和期望的 `verify` 阶段后停止，不要代替其他 Skill 工作。
+
+Noctis 管理的多阶段 workflow 需要推进时，相对于本文件读取 `../noctis/registry.yaml`，用下一 workflow 项的 `entry_stage` 更新任务。只读取注册元数据，不读取下一 Skill；注册表缺失、注册项不一致或当前 Skill 在 workflow 中不唯一时设置 `status: blocked` 并停止。单独执行且 workflow 只有本 Skill 时不依赖注册表。
+
 ## 准备场景方案
 
 优先使用用户指定的 Task 或 Subtask。否则定位唯一满足 `status: active` 且 `stage: verify` 的任务；存在多个候选时展示候选，不要猜测。
@@ -57,7 +67,7 @@ description: 根据用户确认的独立场景执行实际行为验收，按场�
 
 使用 `passed`、`failed`、`blocked` 或 `pending`。除出现未授权写入、数据破坏或安全风险必须立即停止外，执行完整个已确认的安全场景集，再统一汇总。
 
-- 全部 `passed`：设置 `status: completed` 并移除 `stage`。
+- 全部 `passed`：存在下一注册 Skill 时推进到它的 `entry_stage`；没有下一项时设置 `status: completed` 并移除 `stage`。
 - 存在 `failed`：保持 `status: active, stage: verify`，一次性等待用户确认修复范围。
 - 存在无法继续的 `blocked`：设置 `status: blocked, stage: verify`。
 - 存在 `pending`：保持 `status: active, stage: verify`，等待对应人工判定。
