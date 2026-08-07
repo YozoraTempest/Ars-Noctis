@@ -48,4 +48,4 @@ Task 再包含 capability、binding、artifactBinding 和 record。artifactBindi
 - 每个 Task 的 capability、Track、executor、support、Artifact 输入输出和记录文件；
 - 完成条件，以及测试、提交、推送、部署和外部写入授权。
 
-用户选择调整时重新生成并展示完整计划。确认后把 ExecutionPlan 原样交给 `noctis-exec`；Noctis 不调用状态脚本。
+用户选择调整时重新生成并展示完整计划。确认后把 ExecutionPlan 原样交给 `noctis-exec` 的 `start-workflow`；Noctis 不调用状态脚本。

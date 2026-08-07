@@ -26,6 +26,7 @@ capabilities:
     side_effects:
       - "project-write"
       - "local-commit"
+      - "task-record-write"
   implement:
     contract: 1
     executor: "implement"
@@ -40,6 +41,7 @@ capabilities:
     side_effects:
       - "project-write"
       - "local-commit"
+      - "task-record-write"
   review:
     contract: 1
     executor: "code-review"
@@ -77,6 +79,7 @@ capabilities:
         required: true
     side_effects:
       - "behavior-verification"
+      - "local-checkpoint"
       - "verification-record-write"
 workflow_templates:
   reviewed:

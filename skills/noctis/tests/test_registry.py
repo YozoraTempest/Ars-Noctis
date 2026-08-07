@@ -42,7 +42,11 @@ def registry_input() -> dict:
                         "required": True,
                     }
                 },
-                "side_effects": ["project-write", "local-commit"],
+                "side_effects": [
+                    "project-write",
+                    "local-commit",
+                    "task-record-write",
+                ],
             },
             "implement": {
                 "contract": 1,
@@ -56,7 +60,11 @@ def registry_input() -> dict:
                         "required": True,
                     }
                 },
-                "side_effects": ["project-write", "local-commit"],
+                "side_effects": [
+                    "project-write",
+                    "local-commit",
+                    "task-record-write",
+                ],
             },
             "review": {
                 "contract": 1,
@@ -96,7 +104,11 @@ def registry_input() -> dict:
                         "required": True,
                     }
                 },
-                "side_effects": ["behavior-verification", "verification-record-write"],
+                "side_effects": [
+                    "behavior-verification",
+                    "local-checkpoint",
+                    "verification-record-write",
+                ],
             },
         },
         "workflow_templates": {

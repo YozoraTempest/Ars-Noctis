@@ -11,8 +11,8 @@ description: 接收 Noctis 已确认的 Task、Unit 或 Work 执行计划，或�
 
 只接受两种入口：
 
-- ExecutionPlan v2：由 Noctis 交互确认，包含层级、目标、完成条件、授权、依赖图、Task binding 和 Artifact Binding。
-- ExecutionEntry v2：由 Noctis Continue 从已有 `noctis.md` 重建，包含记录路径、revision、最小父级上下文、resolved inputs 和可执行状态。
+- `start-workflow` 接收 ExecutionPlan v2：由 Noctis 交互确认，包含层级、目标、完成条件、授权、依赖图、Task binding 和 Artifact Binding。
+- `resume-workflow` 接收 ExecutionEntry v2：由 Noctis Continue 从已有 `noctis.md` 重建，包含记录路径、revision、最小父级上下文、resolved inputs 和可执行状态。
 
 Task、Unit 与 Work 统一使用 `pending | active | blocked | completed`。Work 只观察 Unit，Unit 只观察 Task；Task 内 Step 由 executor 自己维护。
 
@@ -29,8 +29,8 @@ Task、Unit 与 Work 统一使用 `pending | active | blocked | completed`。Wor
 
 根据当前动作只读取一个直接引用：
 
-- 接收新的 ExecutionPlan：读取 [start.md](references/start.md)。
-- 接收 ExecutionEntry，或推进已有记录：读取 [run.md](references/run.md)。
+- 通过 `start-workflow` 接收新的 ExecutionPlan：读取 [start.md](references/start.md)。
+- 通过 `resume-workflow` 接收 ExecutionEntry，或推进已有记录：读取 [run.md](references/run.md)。
 - Review/Verify 需要插入已授权修复流程：读取 [recover.md](references/recover.md)。
 
 不要从引用继续追读其他引用。动作变化时回到本文件重新路由。

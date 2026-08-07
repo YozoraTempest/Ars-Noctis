@@ -95,6 +95,16 @@ research -> draft -> review -> to-document
 4. 运行结构校验，并用不携带预设答案的真实任务做正向验证。
 5. 根据实际使用中的误触发、漏触发和额外流程成本迭代。
 
+## 仓库验证
+
+使用统一入口校验所有 Ars manifest、Skill 结构和测试目录。显式传入当前环境官方 `quick_validate.py`，不要依赖固定安装路径：
+
+```powershell
+python scripts/validate_repository.py --quick-validate <path-to-quick_validate.py>
+```
+
+脚本强制使用 UTF-8，并分别发现仓库级测试和各 Skill 的测试目录；没有发现任何测试时返回失败。
+
 ## Skills
 
 | Skill | 目标 | 状态 |

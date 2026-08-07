@@ -1,6 +1,6 @@
 # 启动执行计划
 
-只接收 Noctis 已经展示并由用户确认的 ExecutionPlan v2。缺少确认、目标、完成条件、授权、Task binding 或 Artifact Binding 时返回 `replan-required`，不要在 Exec 内补规划。
+只通过 `start-workflow` 接收 Noctis 已经展示并由用户确认的 ExecutionPlan v2。缺少确认、目标、完成条件、授权、Task binding 或 Artifact Binding 时返回 `replan-required`，不要在 Exec 内补规划。
 
 ## 校验计划
 

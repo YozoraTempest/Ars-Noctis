@@ -2,7 +2,7 @@
 
 ## 进入记录
 
-首次执行使用刚创建的记录；无上下文恢复使用 Continue 返回的 ExecutionEntry。无论中断、模型或 Agent 来源如何，都先 `orchestration inspect` 读取最新 revision，不信任旧内存状态。
+首次执行使用刚创建的记录；无上下文恢复通过 `resume-workflow` 接收 Continue 返回的 ExecutionEntry。无论中断、模型或 Agent 来源如何，都先 `orchestration inspect` 读取最新 revision，不信任旧内存状态。
 
 按记录状态处理：
 

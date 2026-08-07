@@ -37,6 +37,6 @@ description: 交互规划编码、数据整理、文档生成等工作的最小 
 - Work/Unit 依赖图、Track 和目标项目；
 - 每个 Task 的 capability、executor、support、Artifact Binding 与记录路径。
 
-一次性展示结构、执行顺序、并行组和副作用，提供 `A 启动`、`B 调整`、`C 取消`。只有用户无歧义确认后，才激活 `noctis-exec` 并传递完整计划。
+一次性展示结构、执行顺序、并行组和副作用，提供 `A 启动`、`B 调整`、`C 取消`。只有用户无歧义确认后，才激活 `noctis-exec` 的 `start-workflow` 并传递完整计划。
 
 计划不单独持久化；Exec 创建的 `noctis.md` 是恢复入口。范围、依赖、provider、完成条件或授权变化时重新规划，不让 Exec 暗自修订。
