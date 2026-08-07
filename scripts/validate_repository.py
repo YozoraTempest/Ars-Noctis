@@ -14,6 +14,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPOSITORY_ROOT / "skills"
 ARS_TOOL = SKILLS_ROOT / "ars" / "scripts" / "ars.py"
 DOCUMENT_TOOL_SYNC = REPOSITORY_ROOT / "scripts" / "sync_document_tools.py"
+ARTIFACT_CONTRACT_SYNC = REPOSITORY_ROOT / "scripts" / "sync_artifact_contracts.py"
 EVAL_VALIDATOR = REPOSITORY_ROOT / "scripts" / "validate_evals.py"
 
 
@@ -77,6 +78,7 @@ def main() -> int:
 
     try:
         run([python, str(DOCUMENT_TOOL_SYNC)], env)
+        run([python, str(ARTIFACT_CONTRACT_SYNC)], env)
         run([python, str(EVAL_VALIDATOR)], env)
         for skill in native_ars:
             run(

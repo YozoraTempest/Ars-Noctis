@@ -4,14 +4,25 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-import os
 import re
 import sys
-import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterator
+from typing import Any
+
+SCRIPT_ROOT = Path(__file__).resolve().parent
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from artifact_contract import ArtifactContractError, normalize_port
+from exec_cli import parse_args
+from exec_entries import entry_candidates
+from exec_entries import entry_summary
+from exec_entries import root_candidates as _root_candidates
+from exec_errors import NoctisError
+from exec_storage import atomic_write as _atomic_write
+from exec_storage import document_lock as _document_lock
+from exec_storage import read_text as _read_text
 
 
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -25,10 +36,6 @@ EXTENSION_ID = re.compile(
 VALID_ITEM_STATUSES = ("pending", "active", "completed", "blocked")
 VALID_ORCHESTRATION_STATUSES = ("pending", "active", "completed", "blocked")
 VALID_LEVELS = ("task", "unit", "work")
-
-
-class NoctisError(ValueError):
-    """Raised when orchestration state or a structured document is invalid."""
 
 
 def _json_scalar(value: Any) -> str:
@@ -202,49 +209,6 @@ def _validate_common(metadata: dict[str, Any]) -> None:
     revision = metadata["revision"]
     if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
         raise NoctisError("revision must be a positive integer")
-
-
-def _read_text(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8-sig")
-    except FileNotFoundError as error:
-        raise NoctisError(f"file does not exist: {path}") from error
-
-
-def _atomic_write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary_name, path)
-    except BaseException:
-        try:
-            os.unlink(temporary_name)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-@contextlib.contextmanager
-def _document_lock(path: Path) -> Iterator[None]:
-    lock_path = path.parent / f".{path.name}.noctis.lock"
-    try:
-        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError as error:
-        raise NoctisError(f"document is locked: {path}") from error
-    try:
-        os.close(descriptor)
-        yield
-    finally:
-        try:
-            lock_path.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def _load_json(source: str | dict[str, Any]) -> dict[str, Any]:
@@ -438,34 +402,10 @@ def _artifact_format(value: Any, context: str) -> str:
 
 
 def _artifact_port(value: Any, context: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise NoctisError(f"{context} must be an object")
-    missing = sorted({"type", "formats", "required"} - set(value))
-    unknown = sorted(
-        set(value) - {"type", "formats", "required", "cardinality"}
-    )
-    if missing:
-        raise NoctisError(f"{context} is missing: {', '.join(missing)}")
-    if unknown:
-        raise NoctisError(f"{context} has unknown fields: {', '.join(unknown)}")
-    formats = _string_list(value["formats"], f"{context}.formats", required=True)
-    normalized_formats = [
-        _artifact_format(item, f"{context}.formats item") for item in formats
-    ]
-    required = value["required"]
-    if not isinstance(required, bool):
-        raise NoctisError(f"{context}.required must be a boolean")
-    cardinality = value.get("cardinality", "one")
-    if cardinality not in ("one", "many"):
-        raise NoctisError(f"{context}.cardinality must be one or many")
-    port = {
-        "type": _identifier(value["type"], f"{context}.type"),
-        "formats": normalized_formats,
-        "required": required,
-    }
-    if cardinality == "many":
-        port["cardinality"] = "many"
-    return port
+    try:
+        return normalize_port(value, context)
+    except ArtifactContractError as error:
+        raise NoctisError(str(error)) from error
 
 
 def _artifact_ref(
@@ -1609,6 +1549,151 @@ def mutate_item_status(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _executor_result(value: Any, item_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise NoctisError("ExecutorResult must be an object")
+    _exact_keys(
+        value,
+        {"version", "task", "status", "outcome", "artifacts", "commits", "recovery"},
+        "ExecutorResult",
+    )
+    if value["version"] != 1:
+        raise NoctisError("ExecutorResult.version must be 1")
+    if _item_id(value["task"], "ExecutorResult.task") != item_id:
+        raise NoctisError("ExecutorResult.task does not match the selected item")
+    status = value["status"]
+    if status not in {"completed", "blocked", "deferred", "recovery-requested"}:
+        raise NoctisError(
+            "ExecutorResult.status must be completed, blocked, deferred, or "
+            "recovery-requested"
+        )
+    outcome = value["outcome"]
+    if status == "deferred":
+        if outcome is not None or value["artifacts"] != {} or value["commits"] != []:
+            raise NoctisError(
+                "a deferred ExecutorResult must have null outcome and empty artifacts/commits"
+            )
+    else:
+        outcome = _non_empty(outcome, "ExecutorResult.outcome")
+
+    commits = _string_list(
+        value["commits"], "ExecutorResult.commits", required=False
+    )
+    capability = item.get("capability")
+    if status in {"completed", "recovery-requested"} and capability and not commits:
+        raise NoctisError(
+            f"{status} {capability} ExecutorResult requires at least one executor-owned commit"
+        )
+
+    if "artifact_binding" in item:
+        artifacts = _artifact_results(
+            value["artifacts"],
+            item["artifact_binding"],
+            "ExecutorResult.artifacts",
+            require_outputs=status in {"completed", "recovery-requested"},
+        )
+    else:
+        if value["artifacts"] != {}:
+            raise NoctisError("Work ExecutorResult cannot publish Task artifacts")
+        artifacts = {}
+
+    recovery = value["recovery"]
+    if status == "recovery-requested":
+        if not isinstance(recovery, dict):
+            raise NoctisError(
+                "recovery-requested ExecutorResult requires a recovery object"
+            )
+        _exact_keys(recovery, {"kind", "evidenceIds"}, "ExecutorResult.recovery")
+        expected_kind = {
+            "review": "review-findings",
+            "verify": "verification-failures",
+        }.get(capability)
+        if recovery["kind"] != expected_kind:
+            raise NoctisError(
+                f"ExecutorResult.recovery.kind must be {expected_kind!r} for {capability}"
+            )
+        recovery = {
+            "kind": recovery["kind"],
+            "evidenceIds": _string_list(
+                recovery["evidenceIds"],
+                "ExecutorResult.recovery.evidenceIds",
+                required=True,
+            ),
+        }
+    elif recovery is not None:
+        raise NoctisError(
+            "ExecutorResult.recovery must be null unless recovery is requested"
+        )
+    return {
+        "version": 1,
+        "task": item_id,
+        "status": status,
+        "outcome": outcome,
+        "artifacts": artifacts,
+        "commits": commits,
+        "recovery": recovery,
+    }
+
+
+def apply_executor_result(args: argparse.Namespace) -> dict[str, Any]:
+    path = _orchestration_path(args.path)
+    payload = _load_json(args.input)
+    with _document_lock(path):
+        path, metadata, body = _load_orchestration(path)
+        if metadata["revision"] != args.expected_revision:
+            raise NoctisError(
+                f"revision mismatch: expected {args.expected_revision}, "
+                f"found {metadata['revision']}"
+            )
+        item_id = _item_id(args.id, "id")
+        if item_id not in metadata["items"]:
+            raise NoctisError(f"orchestration item does not exist: {item_id}")
+        item = metadata["items"][item_id]
+        result = _executor_result(payload, item_id, item)
+        if result["status"] == "deferred":
+            return {
+                "ok": True,
+                "path": str(path),
+                "id": item_id,
+                "applied": False,
+                "executorResult": result,
+                "revision": metadata["revision"],
+                "ready": _ready_items(metadata["items"]),
+            }
+        if item["status"] != "active":
+            raise NoctisError(
+                f"applying ExecutorResult requires active status, found {item['status']}"
+            )
+        if result["status"] == "recovery-requested":
+            return {
+                "ok": True,
+                "path": str(path),
+                "id": item_id,
+                "applied": False,
+                "executorResult": result,
+                "revision": metadata["revision"],
+                "ready": _ready_items(metadata["items"]),
+            }
+
+        item["status"] = result["status"]
+        item["outcome"] = result["outcome"]
+        if "artifacts" in item:
+            item["artifacts"] = result["artifacts"]
+        metadata["revision"] += 1
+        _write_orchestration(path, metadata, notes=_notes(body))
+    return {
+        "ok": True,
+        "path": str(path),
+        "id": item_id,
+        "applied": True,
+        "itemStatus": item["status"],
+        "orchestrationStatus": metadata["status"],
+        "executorResult": result,
+        "revision": metadata["revision"],
+        "ready": _ready_items(metadata["items"]),
+    }
+
+
 def _ancestors(item_id: str, items: dict[str, Any]) -> set[str]:
     result: set[str] = set()
     pending = list(items[item_id]["depends_on"])
@@ -1767,57 +1852,13 @@ def _find_project_root(start: Path) -> Path:
 def _entry_summary(
     root: Path, path: Path, metadata: dict[str, Any]
 ) -> dict[str, Any]:
-    return {
-        "id": metadata["id"],
-        "level": metadata["level"],
-        "title": metadata["title"],
-        "status": metadata["status"],
-        "revision": metadata["revision"],
-        "ready": _ready_items(metadata["items"]),
-        "entries": _entry_candidates(root, path, metadata),
-        "path": path.relative_to(root).as_posix(),
-    }
+    return entry_summary(root, path, metadata, _ready_items)
 
 
 def _entry_candidates(
     root: Path, path: Path, metadata: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    ready = set(_ready_items(metadata["items"]))
-    candidates = []
-    for item_id, item in metadata["items"].items():
-        status = item["status"]
-        if status not in {"active", "blocked"} and item_id not in ready:
-            continue
-        candidates.append(
-            {
-                "record": path.relative_to(root).as_posix(),
-                "id": item_id,
-                "title": item["title"],
-                "status": "ready" if item_id in ready else status,
-                "track": item.get("track"),
-                "capability": item.get("capability"),
-            }
-        )
-    return sorted(candidates, key=lambda candidate: candidate["id"])
-
-
-def _root_candidates(
-    records: list[tuple[Path, dict[str, Any]]],
-) -> list[tuple[Path, dict[str, Any]]]:
-    known = {path for path, _ in records}
-    referenced: set[Path] = set()
-    for path, metadata in records:
-        if metadata["level"] != "work" or metadata["status"] == "completed":
-            continue
-        for item in metadata["items"].values():
-            child = (path.parent / item["path"]).resolve()
-            if child in known:
-                referenced.add(child)
-    return [
-        (path, metadata)
-        for path, metadata in records
-        if metadata["status"] != "completed" and path not in referenced
-    ]
+    return entry_candidates(root, path, metadata, _ready_items)
 
 
 def _entry_context(
@@ -2244,104 +2285,6 @@ def read_extension(args: argparse.Namespace) -> dict[str, Any] | str:
     }
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Noctis execution lifecycle and structured document toolchain."
-    )
-    groups = parser.add_subparsers(dest="group", required=True)
-
-    entry = groups.add_parser(
-        "entry", help="Prepare a context-free entry into the execution lifecycle."
-    )
-    entry.add_argument("--start", type=Path, default=Path.cwd())
-    entry.add_argument("--record", type=Path)
-    entry.add_argument("--id")
-    entry.add_argument(
-        "--list", action="store_true", help="Return all entry candidates without selecting."
-    )
-
-    workflow = groups.add_parser(
-        "workflow", help="Materialize a confirmed ExecutionPlan as pending records."
-    )
-    workflow_actions = workflow.add_subparsers(dest="action", required=True)
-    workflow_materialize = workflow_actions.add_parser("materialize")
-    workflow_materialize.add_argument("--project-root", type=Path, required=True)
-    workflow_materialize.add_argument("--input", default="-")
-    workflow_materialize.add_argument("--confirmed", action="store_true")
-    workflow_materialize.add_argument("--dry-run", action="store_true")
-
-    orchestration = groups.add_parser(
-        "orchestration", help="Operate Task, Unit, and Work orchestration."
-    )
-    actions = orchestration.add_subparsers(dest="action", required=True)
-
-    create = actions.add_parser("create")
-    create.add_argument("--level", choices=VALID_LEVELS, required=True)
-    create.add_argument("--path", type=Path, required=True)
-    create.add_argument("--input", default="-")
-    create.add_argument("--dry-run", action="store_true")
-
-    inspect = actions.add_parser("inspect")
-    inspect.add_argument("--path", type=Path, required=True)
-    inspect.add_argument("--id")
-    inspect.add_argument("--format", choices=("json", "markdown"), default="json")
-
-    for name in ("start", "resume"):
-        command = actions.add_parser(name)
-        command.add_argument("--path", type=Path, required=True)
-        command.add_argument("--id", required=True)
-        command.add_argument("--expected-revision", type=int, required=True)
-
-    finish = actions.add_parser("finish")
-    finish.add_argument("--path", type=Path, required=True)
-    finish.add_argument("--id", required=True)
-    finish.add_argument(
-        "--to-status", choices=("completed", "blocked"), required=True
-    )
-    finish.add_argument("--outcome", required=True)
-    finish.add_argument(
-        "--artifacts", help="Artifact JSON file, or '-' for standard input."
-    )
-    finish.add_argument("--expected-revision", type=int, required=True)
-
-    splice = actions.add_parser("splice")
-    splice.add_argument("--path", type=Path, required=True)
-    splice.add_argument("--after", required=True)
-    splice.add_argument("--expected-revision", type=int, required=True)
-    splice.add_argument("--input", default="-")
-
-    scan = actions.add_parser("scan")
-    scan.add_argument("--root", type=Path, required=True)
-    scan.add_argument("--level", choices=("all", *VALID_LEVELS), default="all")
-    scan.add_argument(
-        "--status",
-        choices=("all", *VALID_ORCHESTRATION_STATUSES),
-        default="all",
-    )
-
-    extend = groups.add_parser("extend", help="Operate structured Markdown extensions.")
-    extend_actions = extend.add_subparsers(dest="action", required=True)
-    for name in ("insert", "upsert", "sync", "remove"):
-        command = extend_actions.add_parser(name)
-        command.add_argument("--document", type=Path, required=True)
-        command.add_argument("--slot", required=True)
-        command.add_argument(
-            "--scope", choices=("once", "each", "item"), required=True
-        )
-        command.add_argument("--item")
-        command.add_argument("--id", required=True)
-        command.add_argument("--expected-revision", type=int, required=True)
-        if name != "remove":
-            command.add_argument("--content", required=True)
-
-    read = extend_actions.add_parser("read")
-    read.add_argument("--document", type=Path, required=True)
-    read.add_argument("--id", required=True)
-    read.add_argument("--item")
-    read.add_argument("--format", choices=("json", "markdown"), default="json")
-    return parser.parse_args()
-
-
 def _print_result(result: dict[str, Any] | str) -> None:
     if isinstance(result, str):
         sys.stdout.write(result)
@@ -2363,6 +2306,8 @@ def main() -> int:
                 result = inspect_orchestration(args)
             elif args.action in ("start", "resume", "finish"):
                 result = mutate_item_status(args)
+            elif args.action == "apply-result":
+                result = apply_executor_result(args)
             elif args.action == "splice":
                 result = splice_tasks(args)
             else:

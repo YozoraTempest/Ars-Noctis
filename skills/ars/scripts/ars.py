@@ -13,6 +13,12 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+SCRIPT_ROOT = Path(__file__).resolve().parent
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from artifact_contract import ArtifactContractError, normalize_ports
+
 try:
     import yaml
 except ModuleNotFoundError as error:
@@ -22,9 +28,6 @@ except ModuleNotFoundError as error:
 
 
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-ARTIFACT_FORMAT = re.compile(
-    r"^[a-z0-9]+(?:[.-][a-z0-9]+)*@[1-9][0-9]*$"
-)
 SLOT = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 ROLES = ("executor", "support")
 STATE_MODES = ("stateless", "documents", "external")
@@ -109,46 +112,10 @@ def _resource(
 
 
 def _ports(value: Any, context: str) -> dict[str, Any]:
-    ports = _mapping(value, context)
-    normalized: dict[str, Any] = {}
-    for port_id in sorted(ports):
-        _identifier(port_id, f"{context} port id")
-        raw = _mapping(ports[port_id], f"{context}.{port_id}")
-        unknown = sorted(set(raw) - {"type", "formats", "required", "cardinality"})
-        missing = sorted({"type", "formats", "required"} - set(raw))
-        if missing:
-            raise ArsError(f"{context}.{port_id} is missing: {', '.join(missing)}")
-        if unknown:
-            raise ArsError(
-                f"{context}.{port_id} has unknown fields: {', '.join(unknown)}"
-            )
-        formats = sorted(
-            _strings(
-                raw["formats"], f"{context}.{port_id}.formats", required=True
-            )
-        )
-        for artifact_format in formats:
-            if not ARTIFACT_FORMAT.fullmatch(artifact_format):
-                raise ArsError(
-                    f"{context}.{port_id}.formats contains invalid format "
-                    f"'{artifact_format}'"
-                )
-        required = raw["required"]
-        if not isinstance(required, bool):
-            raise ArsError(f"{context}.{port_id}.required must be a boolean")
-        cardinality = raw.get("cardinality", "one")
-        if cardinality not in ("one", "many"):
-            raise ArsError(
-                f"{context}.{port_id}.cardinality must be 'one' or 'many'"
-            )
-        normalized[port_id] = {
-            "type": _identifier(raw["type"], f"{context}.{port_id}.type"),
-            "formats": formats,
-            "required": required,
-        }
-        if cardinality == "many":
-            normalized[port_id]["cardinality"] = "many"
-    return normalized
+    try:
+        return normalize_ports(value, context)
+    except ArtifactContractError as error:
+        raise ArsError(str(error)) from error
 
 
 def _capabilities(value: Any) -> list[dict[str, Any]]:

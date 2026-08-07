@@ -222,6 +222,157 @@ class ToolchainTests(unittest.TestCase):
         result = self.run_tool(*arguments, input_value=artifacts)
         return json.loads(result.stdout)
 
+    def apply_result(
+        self,
+        unit: Path,
+        task_id: str,
+        revision: int,
+        result: dict,
+        *,
+        ok: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run_tool(
+            "orchestration",
+            "apply-result",
+            "--path",
+            str(unit),
+            "--id",
+            task_id,
+            "--expected-revision",
+            str(revision),
+            input_value=result,
+            ok=ok,
+        )
+
+    def executor_result(
+        self,
+        task_id: str,
+        status: str,
+        *,
+        outcome: str | None = "advanced",
+        artifacts: dict | None = None,
+        commits: list[str] | None = None,
+        recovery: dict | None = None,
+    ) -> dict:
+        return {
+            "version": 1,
+            "task": task_id,
+            "status": status,
+            "outcome": outcome,
+            "artifacts": artifacts or {},
+            "commits": commits or [],
+            "recovery": recovery,
+        }
+
+    def test_exec_applies_implement_result_before_starting_the_next_task(self) -> None:
+        tasks = [
+            task("U01.T01", "implement", "map-frontend", []),
+            task("U01.T02", "review", "map-frontend", ["U01.T01"]),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            unit = self.create_unit(Path(directory), tasks)
+            self.transition("start", unit, "U01.T01", 1)
+
+            applied = self.apply_result(
+                unit,
+                "U01.T01",
+                2,
+                self.executor_result(
+                    "U01.T01", "completed", commits=["abc1234", "def5678"]
+                ),
+            )
+            result = json.loads(applied.stdout)
+            self.assertTrue(result["applied"])
+            self.assertEqual(result["itemStatus"], "completed")
+            self.assertEqual(result["ready"], ["U01.T02"])
+            self.assertEqual(result["revision"], 3)
+
+            started = self.transition("start", unit, "U01.T02", 3)
+            self.assertEqual(started["itemStatus"], "active")
+            self.assertEqual(started["revision"], 4)
+
+    def test_executor_result_enforces_capability_ownership(self) -> None:
+        tasks = [
+            task("U01.T01", "implement", "map-frontend", []),
+            task("U01.T02", "review", "map-frontend", ["U01.T01"]),
+        ]
+        tasks[1]["artifactBinding"]["outputs"] = {
+            "review": {
+                "type": "review-record",
+                "formats": ["ars.review@1"],
+                "required": True,
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            unit = self.create_unit(Path(directory), tasks)
+            self.transition("start", unit, "U01.T01", 1)
+            missing_commit = self.apply_result(
+                unit,
+                "U01.T01",
+                2,
+                self.executor_result("U01.T01", "completed"),
+                ok=False,
+            )
+            self.assertIn("requires at least one executor-owned commit", missing_commit.stderr)
+
+            self.apply_result(
+                unit,
+                "U01.T01",
+                2,
+                self.executor_result("U01.T01", "completed", commits=["abc1234"]),
+            )
+            self.transition("start", unit, "U01.T02", 3)
+            review_artifact = {
+                "review": {
+                    "type": "review-record",
+                    "format": "ars.review@1",
+                    "location": "tracks/map-frontend/review.md",
+                    "revision": "4",
+                }
+            }
+            missing_review_commit = self.apply_result(
+                unit,
+                "U01.T02",
+                4,
+                self.executor_result(
+                    "U01.T02",
+                    "completed",
+                    artifacts=review_artifact,
+                ),
+                ok=False,
+            )
+            self.assertIn(
+                "requires at least one executor-owned commit",
+                missing_review_commit.stderr,
+            )
+
+            recovery = self.apply_result(
+                unit,
+                "U01.T02",
+                4,
+                self.executor_result(
+                    "U01.T02",
+                    "recovery-requested",
+                    outcome="accepted findings require a fix",
+                    artifacts=review_artifact,
+                    commits=["review-doc-commit"],
+                    recovery={
+                        "kind": "review-findings",
+                        "evidenceIds": ["R-001"],
+                    },
+                ),
+            )
+            value = json.loads(recovery.stdout)
+            self.assertFalse(value["applied"])
+            self.assertEqual(
+                value["executorResult"]["commits"], ["review-doc-commit"]
+            )
+            self.assertEqual(value["revision"], 4)
+            inspected = self.run_tool(
+                "orchestration", "inspect", "--path", str(unit), "--id", "U01.T02"
+            )
+            self.assertEqual(json.loads(inspected.stdout)["item"]["status"], "active")
+
     def test_task_record_is_resumable_without_a_unit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

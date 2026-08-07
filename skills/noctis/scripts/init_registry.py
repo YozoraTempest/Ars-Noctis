@@ -13,11 +13,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+SCRIPT_ROOT = Path(__file__).resolve().parent
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from artifact_contract import ArtifactContractError, normalize_ports
+
 
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-ARTIFACT_FORMAT = re.compile(
-    r"^[a-z0-9]+(?:[.-][a-z0-9]+)*@[1-9][0-9]*$"
-)
 TOP_LEVEL_KEYS = (
     "version",
     "default_workflow",
@@ -100,39 +103,10 @@ def _string_list(
 
 
 def _ports(value: Any, context: str) -> dict[str, Any]:
-    ports = _mapping(value, context)
-    for port_id, raw in ports.items():
-        _identifier(port_id, f"{context} port id")
-        spec = _mapping(raw, f"{context}.{port_id}")
-        missing = sorted({"type", "formats", "required"} - set(spec))
-        unknown = sorted(
-            set(spec) - {"type", "formats", "required", "cardinality"}
-        )
-        if missing:
-            raise RegistryError(
-                f"{context}.{port_id} is missing: {', '.join(missing)}"
-            )
-        if unknown:
-            raise RegistryError(
-                f"{context}.{port_id} has unknown fields: {', '.join(unknown)}"
-            )
-        _identifier(spec["type"], f"{context}.{port_id}.type")
-        formats = _string_list(
-            spec["formats"], f"{context}.{port_id}.formats", required=True
-        )
-        for artifact_format in formats:
-            if not ARTIFACT_FORMAT.fullmatch(artifact_format):
-                raise RegistryError(
-                    f"{context}.{port_id}.formats contains invalid format "
-                    f"'{artifact_format}'"
-                )
-        if not isinstance(spec["required"], bool):
-            raise RegistryError(f"{context}.{port_id}.required must be a boolean")
-        if spec.get("cardinality", "one") not in ("one", "many"):
-            raise RegistryError(
-                f"{context}.{port_id}.cardinality must be 'one' or 'many'"
-            )
-    return ports
+    try:
+        return normalize_ports(value, context)
+    except ArtifactContractError as error:
+        raise RegistryError(str(error)) from error
 
 
 def _source(value: Any, context: str) -> tuple[str, str]:
