@@ -98,13 +98,19 @@ research -> draft -> review -> to-document
 
 ## 仓库验证
 
-使用统一入口校验所有 Ars manifest、Skill 结构、触发评测语料、共享文档工具同步状态和测试目录。显式传入当前环境官方 `quick_validate.py`，不要依赖固定安装路径：
+使用统一入口校验所有 Ars manifest、Skill 结构、触发评测语料、共享 Artifact 契约与文档工具同步状态和测试目录。显式传入当前环境官方 `quick_validate.py`，不要依赖固定安装路径：
 
 ```powershell
 python scripts/validate_repository.py --quick-validate <path-to-quick_validate.py>
 ```
 
 脚本强制使用 UTF-8，并分别发现仓库级测试和各 Skill 的测试目录；没有发现任何测试时返回失败。
+
+实际触发率评测通过独立 evaluator 协议运行，每个请求从标准输入接收一条 case，并返回 `{"trigger": true|false}`：
+
+```powershell
+python scripts/evaluate_triggers.py --evaluator <evaluator.py> --min-precision 0.8 --min-recall 0.8
+```
 
 ## Skills
 
