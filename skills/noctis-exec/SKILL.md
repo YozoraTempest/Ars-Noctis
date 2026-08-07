@@ -9,10 +9,12 @@ description: 接收 Noctis 已确认的 Task、Unit 或 Work 执行计划，或�
 
 ## 核心 Interface
 
-只接受两种入口：
+区分物化与执行两个能力：
 
-- `start-workflow` 接收 ExecutionPlan v2：由 Noctis 交互确认，包含层级、目标、完成条件、授权、依赖图、Task binding 和 Artifact Binding。
-- `resume-workflow` 接收 ExecutionEntry v2：由 Noctis Continue 从已有 `noctis.md` 重建，包含记录路径、revision、最小父级上下文、resolved inputs 和可执行状态。
+- `materialize-workflow` 接收用户确认的 ExecutionPlan v2，只把完整计划原子写成初始 `pending` 的 `noctis.md`。
+- `execute-workflow` 只接收 ExecutionEntry v2。无论是新计划还是断点恢复，都先由 `entry` 从 `noctis.md` 生成相同的执行输入。
+
+两个能力都把当前根 `noctis.md` 发布为 `noctis.record@3` orchestration Artifact。Exec 不选择 Workflow Template，也不直接执行 ExecutionPlan。
 
 Task、Unit 与 Work 统一使用 `pending | active | blocked | completed`。Work 只观察 Unit，Unit 只观察 Task；Task 内 Step 由 executor 自己维护。
 
@@ -29,8 +31,8 @@ Task、Unit 与 Work 统一使用 `pending | active | blocked | completed`。Wor
 
 根据当前动作只读取一个直接引用：
 
-- 通过 `start-workflow` 接收新的 ExecutionPlan：读取 [start.md](references/start.md)。
-- 通过 `resume-workflow` 接收 ExecutionEntry，或推进已有记录：读取 [run.md](references/run.md)。
+- 通过 `materialize-workflow` 接收新的 ExecutionPlan：读取 [start.md](references/start.md)。
+- 通过 `execute-workflow` 接收 ExecutionEntry 并推进已有记录：读取 [run.md](references/run.md)。
 - Review/Verify 需要插入已授权修复流程：读取 [recover.md](references/recover.md)。
 
 不要从引用继续追读其他引用。动作变化时回到本文件重新路由。
@@ -39,6 +41,7 @@ Task、Unit 与 Work 统一使用 `pending | active | blocked | completed`。Wor
 
 使用 `scripts/exec.py`：
 
+- `workflow materialize`：整体校验并创建已确认 ExecutionPlan 的全部 pending 记录，返回根 orchestration Artifact；
 - `entry`：只读定位项目记录并生成最小 ExecutionEntry。
 - `orchestration create/inspect/start/resume/finish/splice/scan`：管理生命周期。
 - `extend insert/upsert/sync/remove/read`：管理稳定 Markdown 扩展。

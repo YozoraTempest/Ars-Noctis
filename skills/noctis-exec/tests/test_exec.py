@@ -1,15 +1,27 @@
 from __future__ import annotations
 
+import argparse
+import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 EXEC_SCRIPT = SKILL_ROOT / "scripts" / "exec.py"
+
+
+def load_exec_module():
+    spec = importlib.util.spec_from_file_location("noctis_exec", EXEC_SCRIPT)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {EXEC_SCRIPT}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def binding(capability: str) -> dict:
@@ -103,6 +115,46 @@ def task_payload(task_id: str = "T01") -> dict:
             "document": "implementation",
             "path": "implementation.md",
         },
+    }
+
+
+def workflow_plan() -> dict:
+    work_path = "Noctis/accounts/work/migration/noctis.md"
+    unit_path = "Noctis/accounts/work/migration/units/U01/noctis.md"
+    return {
+        "version": 2,
+        "root": work_path,
+        "records": [
+            {
+                "level": "work",
+                "path": work_path,
+                "input": {
+                    "id": "migration",
+                    "title": "表单迁移",
+                    "objective": "按业务范围完成迁移。",
+                    "completionConditions": ["迁移 Unit 完成。"],
+                    "authority": {
+                        "allowed": ["修改本地项目文件。"],
+                        "forbidden": ["不得推送或部署。"],
+                    },
+                    "units": [
+                        {
+                            "id": "U01",
+                            "title": "客户类型",
+                            "path": "units/U01/noctis.md",
+                            "dependsOn": [],
+                        }
+                    ],
+                },
+            },
+            {
+                "level": "unit",
+                "path": unit_path,
+                "input": unit_payload(
+                    [task("U01.T01", "implement", "map-frontend", [])]
+                ),
+            },
+        ],
     }
 
 
@@ -214,6 +266,160 @@ class ToolchainTests(unittest.TestCase):
             self.transition("start", task_root, "T01", 1)
             completed = self.transition("finish", task_root, "T01", 2)
             self.assertEqual(completed["orchestrationStatus"], "completed")
+
+    def test_workflow_materialize_requires_confirmation_and_creates_pending_records(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = workflow_plan()
+            work = root / plan["root"]
+            unit = root / plan["records"][1]["path"]
+
+            validated = self.run_tool(
+                "workflow",
+                "materialize",
+                "--project-root",
+                str(root),
+                "--dry-run",
+                input_value=plan,
+            )
+            candidate = json.loads(validated.stdout)
+            self.assertEqual(candidate["status"], "valid")
+            self.assertFalse(work.exists())
+            self.assertFalse(unit.exists())
+
+            rejected = self.run_tool(
+                "workflow",
+                "materialize",
+                "--project-root",
+                str(root),
+                input_value=plan,
+                ok=False,
+            )
+            self.assertIn("requires user confirmation", rejected.stderr)
+            self.assertFalse(work.exists())
+            self.assertFalse(unit.exists())
+
+            created = self.run_tool(
+                "workflow",
+                "materialize",
+                "--project-root",
+                str(root),
+                "--confirmed",
+                input_value=plan,
+            )
+            result = json.loads(created.stdout)
+            self.assertEqual(result["status"], "created")
+            self.assertTrue(work.is_file())
+            self.assertTrue(unit.is_file())
+            inspected = self.run_tool(
+                "orchestration", "inspect", "--path", str(work)
+            )
+            self.assertEqual(
+                json.loads(inspected.stdout)["metadata"]["status"], "pending"
+            )
+            self.assertEqual(
+                result["artifacts"]["orchestration"],
+                {
+                    "type": "orchestration-record",
+                    "format": "noctis.record@3",
+                    "location": plan["root"],
+                    "revision": 1,
+                },
+            )
+
+    def test_workflow_materialize_rejects_partial_or_mismatched_plans(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = workflow_plan()
+            unit = root / plan["records"][1]["path"]
+            work = root / plan["root"]
+            unit.parent.mkdir(parents=True)
+            unit.write_text("existing", encoding="utf-8")
+
+            conflict = self.run_tool(
+                "workflow",
+                "materialize",
+                "--project-root",
+                str(root),
+                "--confirmed",
+                input_value=plan,
+                ok=False,
+            )
+            self.assertIn("already exists", conflict.stderr)
+            self.assertFalse(work.exists())
+            self.assertEqual(unit.read_text(encoding="utf-8"), "existing")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = workflow_plan()
+            plan["records"][0]["input"]["units"][0]["path"] = (
+                "units/missing/noctis.md"
+            )
+            mismatch = self.run_tool(
+                "workflow",
+                "materialize",
+                "--project-root",
+                str(root),
+                "--dry-run",
+                input_value=plan,
+                ok=False,
+            )
+            self.assertIn("planned Unit record", mismatch.stderr)
+            self.assertFalse((root / "Noctis").exists())
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = workflow_plan()
+            extra = json.loads(json.dumps(plan["records"][1]))
+            extra["path"] = (
+                "Noctis/accounts/work/migration/units/unselected/noctis.md"
+            )
+            extra["input"]["id"] = "U02"
+            plan["records"].append(extra)
+            unselected = self.run_tool(
+                "workflow",
+                "materialize",
+                "--project-root",
+                str(root),
+                "--dry-run",
+                input_value=plan,
+                ok=False,
+            )
+            self.assertIn("only the root and its declared Units", unselected.stderr)
+            self.assertFalse((root / "Noctis").exists())
+
+    def test_workflow_materialize_rolls_back_a_mid_write_failure(self) -> None:
+        module = load_exec_module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = workflow_plan()
+            work = root / plan["root"]
+            unit = root / plan["records"][1]["path"]
+            original_write = module._atomic_write
+            writes = 0
+
+            def fail_second_write(path, content):
+                nonlocal writes
+                writes += 1
+                if writes == 2:
+                    raise OSError("injected write failure")
+                original_write(path, content)
+
+            args = argparse.Namespace(
+                project_root=root,
+                input=plan,
+                confirmed=True,
+                dry_run=False,
+            )
+            with mock.patch.object(
+                module, "_atomic_write", side_effect=fail_second_write
+            ):
+                with self.assertRaisesRegex(OSError, "injected write failure"):
+                    module.materialize_workflow(args)
+
+            self.assertEqual(writes, 2)
+            self.assertFalse(work.exists())
+            self.assertFalse(unit.exists())
 
     def test_entry_collapses_child_units_and_exposes_multiple_roots(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -350,12 +556,41 @@ class ToolchainTests(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            (root / "Noctis").mkdir()
+            (root / "Noctis" / "registry.yaml").write_text(
+                "version: 3\n", encoding="utf-8"
+            )
             unit = self.create_unit(root, tasks)
             inspected = self.run_tool(
                 "orchestration", "inspect", "--path", str(unit)
             )
             self.assertEqual(
                 json.loads(inspected.stdout)["ready"], ["U01.T01", "U01.T02"]
+            )
+            selectable = self.run_tool(
+                "entry", "--record", str(unit / "noctis.md")
+            )
+            choices = json.loads(selectable.stdout)
+            self.assertEqual(choices["status"], "selection-required")
+            self.assertEqual(
+                [
+                    (entry["id"], entry["track"], entry["status"])
+                    for entry in choices["candidates"]
+                ],
+                [
+                    ("U01.T01", "map-frontend", "ready"),
+                    ("U01.T02", "lowcode-template", "ready"),
+                ],
+            )
+            selected = self.run_tool(
+                "entry",
+                "--record",
+                str(unit / "noctis.md"),
+                "--id",
+                "U01.T02",
+            )
+            self.assertEqual(
+                json.loads(selected.stdout)["entry"]["target"]["id"], "U01.T02"
             )
 
             self.transition("start", unit, "U01.T01", 1)

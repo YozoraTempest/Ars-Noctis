@@ -8,6 +8,14 @@
 
 不同项目的 Task 通常位于不同 Track，可以并行；局部 Review 依赖对应 Implement，集成 Review/Verify 依赖全部局部分支。正常计划不得包含 Fix。
 
+## 选择工作流
+
+当前 Agent 先调用 `noctis-exec entry` 扫描已有根 `noctis.md`。存在多个工作流实例时先展示路径、目标和状态；选定 Unit 后，再展示不同 Track 上的 active、ready、blocked Task 入口。用户选择具体入口后生成唯一 Entry，不重新展开模板或覆盖 Task 快照。
+
+创建新计划时再读取 `Noctis/registry.yaml`，用 Workflow Template 展开当前候选。`default_workflow` 只作为推荐，不自动启动；注册表模板不是此前生成的工作流。
+
+用户选择后再展开 Task、Track、provider 和授权。Exec 只接收最终确认的 ExecutionPlan，不读取注册表替用户选择模板。
+
 ## 解析能力
 
 读取 `Noctis/registry.yaml`，从 Workflow Template 展开 Task 图。同一 capability 可以出现多次。为每个 Task 固化 contract、executor provider、support provider/激活时机、Artifact Binding 和记录路径；不读取 provider 的 `SKILL.md`。
@@ -48,4 +56,4 @@ Task 再包含 capability、binding、artifactBinding 和 record。artifactBindi
 - 每个 Task 的 capability、Track、executor、support、Artifact 输入输出和记录文件；
 - 完成条件，以及测试、提交、推送、部署和外部写入授权。
 
-用户选择调整时重新生成并展示完整计划。确认后把 ExecutionPlan 原样交给 `noctis-exec` 的 `start-workflow`；Noctis 不调用状态脚本。
+用户选择调整时重新生成并展示完整计划。确认后把 ExecutionPlan 原样交给 `noctis-exec` 的 `materialize-workflow`，并明确标记本次调用已经确认。物化成功后调用 `entry --record <root>`，再把 ExecutionEntry 原样交给 `execute-workflow`；正常启动与 Continue 恢复共用这一执行输入。

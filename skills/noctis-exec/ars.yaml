@@ -5,7 +5,7 @@ role: executor
 state:
   mode: documents
 capabilities:
-  - id: start-workflow
+  - id: materialize-workflow
     contract: 1
     inputs:
       execution-plan:
@@ -13,10 +13,15 @@ capabilities:
         formats:
           - noctis.execution-plan@2
         required: true
-    outputs: {}
+    outputs:
+      orchestration:
+        type: orchestration-record
+        formats:
+          - noctis.record@3
+        required: true
     side_effects:
       - orchestration-write
-  - id: resume-workflow
+  - id: execute-workflow
     contract: 1
     inputs:
       execution-entry:
@@ -24,7 +29,12 @@ capabilities:
         formats:
           - noctis.execution-entry@2
         required: true
-    outputs: {}
+    outputs:
+      orchestration:
+        type: orchestration-record
+        formats:
+          - noctis.record@3
+        required: true
     side_effects:
       - orchestration-write
 supports: []

@@ -23,7 +23,7 @@ EXTENSION_ID = re.compile(
     r"^[a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*$"
 )
 VALID_ITEM_STATUSES = ("pending", "active", "completed", "blocked")
-VALID_ORCHESTRATION_STATUSES = ("active", "completed", "blocked")
+VALID_ORCHESTRATION_STATUSES = ("pending", "active", "completed", "blocked")
 VALID_LEVELS = ("task", "unit", "work")
 
 
@@ -247,7 +247,9 @@ def _document_lock(path: Path) -> Iterator[None]:
             pass
 
 
-def _load_json(source: str) -> dict[str, Any]:
+def _load_json(source: str | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(source, dict):
+        return source
     stream = sys.stdin if source == "-" else Path(source).open(encoding="utf-8-sig")
     try:
         value = json.load(stream)
@@ -714,6 +716,8 @@ def _ready_items(items: dict[str, Any]) -> list[str]:
 def _aggregate_status(items: dict[str, Any]) -> str:
     if all(item["status"] == "completed" for item in items.values()):
         return "completed"
+    if all(item["status"] == "pending" for item in items.values()):
+        return "pending"
     if any(item["status"] == "active" for item in items.values()) or _ready_items(items):
         return "active"
     return "blocked"
@@ -1238,6 +1242,163 @@ def create_orchestration(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def _workflow_record_path(project_root: Path, value: Any, context: str) -> tuple[str, Path]:
+    relative = _relative_path(value, context)
+    parsed = PurePosixPath(relative)
+    if not parsed.parts or parsed.parts[0] != "Noctis" or parsed.name != "noctis.md":
+        raise NoctisError(f"{context} must name a noctis.md inside project Noctis/")
+    return relative, project_root.joinpath(*parsed.parts)
+
+
+def _workflow_plan(args: argparse.Namespace) -> tuple[Path, str, list[dict[str, Any]]]:
+    project_root = args.project_root.resolve()
+    if not project_root.is_dir():
+        raise NoctisError(f"project root does not exist: {project_root}")
+    payload = _load_json(args.input)
+    _exact_keys(payload, {"version", "root", "records"}, "plan")
+    if isinstance(payload["version"], bool) or payload["version"] != 2:
+        raise NoctisError("plan.version must be 2")
+    records = payload["records"]
+    if not isinstance(records, list) or not records:
+        raise NoctisError("plan.records must be a non-empty list")
+
+    normalized: list[dict[str, Any]] = []
+    paths: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(records):
+        context = f"plan.records[{index}]"
+        if not isinstance(raw, dict):
+            raise NoctisError(f"{context} must be an object")
+        _exact_keys(raw, {"level", "path", "input"}, context)
+        level = raw["level"]
+        if level not in VALID_LEVELS:
+            raise NoctisError(f"{context}.level must be task, unit, or work")
+        relative, target = _workflow_record_path(
+            project_root, raw["path"], f"{context}.path"
+        )
+        if relative in paths:
+            raise NoctisError(f"plan contains duplicate record path: {relative}")
+        if not isinstance(raw["input"], dict):
+            raise NoctisError(f"{context}.input must be an object")
+        record = {
+            "level": level,
+            "path": relative,
+            "target": target,
+            "input": raw["input"],
+        }
+        paths[relative] = record
+        normalized.append(record)
+
+    root, _ = _workflow_record_path(project_root, payload["root"], "plan.root")
+    if root not in paths:
+        raise NoctisError("plan.root must match one record path")
+
+    work_children: dict[str, set[str]] = {}
+    for record in normalized:
+        if record["level"] != "work":
+            continue
+        children: set[str] = set()
+        units = record["input"].get("units")
+        if not isinstance(units, list):
+            continue
+        for index, unit in enumerate(units):
+            if not isinstance(unit, dict) or "path" not in unit:
+                continue
+            unit_relative = _relative_path(
+                unit["path"], f"work unit[{index}].path"
+            )
+            unit_target = (
+                record["target"].parent.joinpath(*PurePosixPath(unit_relative).parts)
+            ).resolve()
+            match = next(
+                (candidate for candidate in normalized if candidate["target"] == unit_target),
+                None,
+            )
+            if match is None or match["level"] != "unit":
+                raise NoctisError(
+                    f"work unit[{index}].path must reference a planned Unit record"
+                )
+            children.add(match["path"])
+        work_children[record["path"]] = children
+
+    root_record = paths[root]
+    allowed_paths = {root}
+    if root_record["level"] == "work":
+        allowed_paths.update(work_children.get(root, set()))
+    if set(paths) != allowed_paths:
+        raise NoctisError("plan.records must contain only the root and its declared Units")
+
+    ordered = sorted(normalized, key=lambda item: item["level"] == "work")
+    return project_root, root, ordered
+
+
+def materialize_workflow(args: argparse.Namespace) -> dict[str, Any]:
+    project_root, root, records = _workflow_plan(args)
+    if not args.dry_run and not args.confirmed:
+        raise NoctisError(
+            "workflow materialize requires user confirmation via --confirmed"
+        )
+
+    validations = []
+    for record in records:
+        if record["target"].exists():
+            raise NoctisError(f"orchestration already exists: {record['target']}")
+        validations.append(
+            create_orchestration(
+                argparse.Namespace(
+                    level=record["level"],
+                    path=record["target"],
+                    input=record["input"],
+                    dry_run=True,
+                )
+            )
+        )
+
+    artifact = {
+        "type": "orchestration-record",
+        "format": "noctis.record@3",
+        "location": root,
+        "revision": 1,
+    }
+    if args.dry_run:
+        return {
+            "ok": True,
+            "status": "valid",
+            "root": root,
+            "records": validations,
+            "artifacts": {"orchestration": artifact},
+        }
+
+    created: list[Path] = []
+    lock_target = project_root / ".noctis-workflow-materialize"
+    with _document_lock(lock_target):
+        for record in records:
+            if record["target"].exists():
+                raise NoctisError(f"orchestration already exists: {record['target']}")
+        try:
+            for record in records:
+                result = create_orchestration(
+                    argparse.Namespace(
+                        level=record["level"],
+                        path=record["target"],
+                        input=record["input"],
+                        dry_run=False,
+                    )
+                )
+                created.append(Path(result["path"]))
+        except BaseException:
+            for path in reversed(created):
+                path.unlink(missing_ok=True)
+            raise
+
+    return {
+        "ok": True,
+        "status": "created",
+        "root": root,
+        "records": [record["path"] for record in records],
+        "artifacts": {"orchestration": artifact},
+    }
+
+
 def _load_orchestration(path_value: Path) -> tuple[Path, dict[str, Any], str]:
     path = _orchestration_path(path_value)
     frontmatter, body = _frontmatter(_read_text(path))
@@ -1551,8 +1712,31 @@ def _entry_summary(
         "status": metadata["status"],
         "revision": metadata["revision"],
         "ready": _ready_items(metadata["items"]),
+        "entries": _entry_candidates(root, path, metadata),
         "path": path.relative_to(root).as_posix(),
     }
+
+
+def _entry_candidates(
+    root: Path, path: Path, metadata: dict[str, Any]
+) -> list[dict[str, Any]]:
+    ready = set(_ready_items(metadata["items"]))
+    candidates = []
+    for item_id, item in metadata["items"].items():
+        status = item["status"]
+        if status not in {"active", "blocked"} and item_id not in ready:
+            continue
+        candidates.append(
+            {
+                "record": path.relative_to(root).as_posix(),
+                "id": item_id,
+                "title": item["title"],
+                "status": "ready" if item_id in ready else status,
+                "track": item.get("track"),
+                "capability": item.get("capability"),
+            }
+        )
+    return sorted(candidates, key=lambda candidate: candidate["id"])
 
 
 def _root_candidates(
@@ -1654,12 +1838,7 @@ def prepare_entry(args: argparse.Namespace) -> dict[str, Any]:
             if path.exists():
                 _load_orchestration(path)
             raise NoctisError(f"entry record does not exist: {path}")
-        return {
-            "ok": True,
-            "status": "ready",
-            "warnings": warnings,
-            "entry": _entry_context(root, path, matches[0], args.id),
-        }
+        return _select_entry(root, path, matches[0], args.id, warnings)
 
     candidates = _root_candidates(records)
     summaries = [
@@ -1682,11 +1861,39 @@ def prepare_entry(args: argparse.Namespace) -> dict[str, Any]:
             "warnings": warnings,
         }
     path, metadata = candidates[0]
+    return _select_entry(root, path, metadata, args.id, warnings)
+
+
+def _select_entry(
+    root: Path,
+    path: Path,
+    metadata: dict[str, Any],
+    item_value: str | None,
+    warnings: list[str],
+) -> dict[str, Any]:
+    if item_value is not None or metadata["level"] == "task":
+        return {
+            "ok": True,
+            "status": "ready",
+            "warnings": warnings,
+            "entry": _entry_context(root, path, metadata, item_value),
+        }
+    candidates = _entry_candidates(root, path, metadata)
+    if len(candidates) > 1:
+        return {
+            "ok": True,
+            "status": "selection-required",
+            "projectRoot": str(root),
+            "orchestration": _entry_summary(root, path, metadata),
+            "candidates": candidates,
+            "warnings": warnings,
+        }
+    selected = candidates[0]["id"] if candidates else None
     return {
         "ok": True,
         "status": "ready",
         "warnings": warnings,
-        "entry": _entry_context(root, path, metadata, args.id),
+        "entry": _entry_context(root, path, metadata, selected),
     }
 
 
@@ -1963,6 +2170,16 @@ def parse_args() -> argparse.Namespace:
     entry.add_argument("--record", type=Path)
     entry.add_argument("--id")
 
+    workflow = groups.add_parser(
+        "workflow", help="Materialize a confirmed ExecutionPlan as pending records."
+    )
+    workflow_actions = workflow.add_subparsers(dest="action", required=True)
+    workflow_materialize = workflow_actions.add_parser("materialize")
+    workflow_materialize.add_argument("--project-root", type=Path, required=True)
+    workflow_materialize.add_argument("--input", default="-")
+    workflow_materialize.add_argument("--confirmed", action="store_true")
+    workflow_materialize.add_argument("--dry-run", action="store_true")
+
     orchestration = groups.add_parser(
         "orchestration", help="Operate Task, Unit, and Work orchestration."
     )
@@ -2047,6 +2264,8 @@ def main() -> int:
     try:
         if args.group == "entry":
             result = prepare_entry(args)
+        elif args.group == "workflow":
+            result = materialize_workflow(args)
         elif args.group == "orchestration":
             if args.action == "create":
                 result = create_orchestration(args)

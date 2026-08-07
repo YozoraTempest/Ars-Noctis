@@ -2,7 +2,7 @@
 
 ## 进入记录
 
-首次执行使用刚创建的记录；无上下文恢复通过 `resume-workflow` 接收 Continue 返回的 ExecutionEntry。无论中断、模型或 Agent 来源如何，都先 `orchestration inspect` 读取最新 revision，不信任旧内存状态。
+`execute-workflow` 始终接收 `entry` 从 `noctis.md` 生成的 ExecutionEntry：首次执行在物化后生成，断点恢复由 Continue 扫描后生成。无论中断、模型或 Agent 来源如何，都先 `orchestration inspect` 读取最新 revision，不信任旧内存状态。
 
 按记录状态处理：
 
@@ -25,6 +25,8 @@ Task 记录直接调度其唯一 Task。Unit 从 ready 中选择依赖已完成�
 4. 使用 Task `record.path` 调用所属 Ars 的文档工具。
 5. executor 返回后重新 inspect；根据事实用 `finish --artifacts` 写入 `completed` 或 `blocked`、outcome 和 ArtifactRef。completed 时缺少 required output 必须失败。
 
+每次退出 `execute-workflow` 时，把当前根 `noctis.md` 作为 `noctis.record@3` orchestration Artifact 返回；revision 使用最新文档 revision。
+
 不要读取项目注册表替换既有 Task 快照，也不要直接打开其他 Skill 的 `SKILL.md`。
 
 ## 文档与检查点
@@ -32,3 +34,5 @@ Task 记录直接调度其唯一 Task。Unit 从 ready 中选择依赖已完成�
 根据 provider manifest，在能力实际启用时用 `extend insert/upsert/sync` 持久加入 augmentation。不要修改源模板或覆盖未知 extension。
 
 执行 Skill 的业务提交归对应 Task 和目标仓库；编排记录使用独立 `docs:` 检查点。不要把多个仓库的业务改动混入一个提交。
+
+Git 证据由需要提交的 executor 判定，不替代通用状态机：原工作树存在未提交变更时继续当前 active Task；存在可达的 `Noctis-Task: <task-id>` 提交而记录未完成时，核对范围后补记并推进；记录已完成但提交不可达时阻塞。切换工作树或机器后，无法获取未提交内容，只能从最后一个可达且已登记的提交检查点重新执行；远端机器必须先通过 fetch、bundle 等方式取得提交。

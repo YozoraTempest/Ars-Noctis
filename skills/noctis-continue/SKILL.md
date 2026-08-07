@@ -12,8 +12,8 @@ description: 在当前执行者缺少可信对话上下文时，从项目既有 
 1. 激活 `noctis-exec`，使用其 `scripts/exec.py entry` 执行只读定位。
 2. 存在可选 `orchestration` ArtifactRef 时使用其记录位置；否则，用户提供记录路径时传入 `--record`，提供明确 Task 时再传入 `--id`。
 3. 未提供记录时从当前目录向上定位最近的 `Noctis/registry.yaml`，只扫描该项目。
-4. 唯一未完成根记录直接使用；多个候选展示路径、目标和状态并让用户选择；没有候选或记录损坏时报告事实，不新建计划。
-5. 把返回的 ExecutionEntry 原样交给 `noctis-exec` 的 `resume-workflow`，由 Exec 判断 `pending`、`active`、`blocked` 或 `completed` 并继续生命周期。
+4. 多个状态机实例先按根记录的路径、目标和状态选择；选定 Unit 后若不同 Track 上有多个 active、ready 或 blocked Task 入口，再展示 Task、Track、能力和状态让用户选择。Work 同理先选择其 Unit 入口。没有候选或记录损坏时报告事实，不新建计划。
+5. 用选定的 `record` 和 `id` 生成唯一 ExecutionEntry，原样交给 `noctis-exec` 的 `execute-workflow`，由 Exec 继续生命周期。
 
 ExecutionEntry v2 只包含当前记录、revision、父级目标与完成条件、授权、active/ready/blocked 列表，以及明确目标的 binding、记录路径、直接前置结果、resolvedInputs 和 unresolvedInputs。
 

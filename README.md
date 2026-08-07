@@ -80,9 +80,10 @@ research -> draft -> review -> to-document
 - Work 编排通常串行的 Unit；Unit 表示一个需求的完整实现，并用 Task 依赖图表达跨项目并行与集成汇合。
 - Track 只是按项目或集成范围组织文件的可选分组，不具有状态；Step 由原子 Skill 在 Task 内部维护。
 - `$noctis init` 从可用 Ars 的 `ars.yaml` 生成项目级注册表；不同内容不会静默覆盖。
-- `$noctis workflow=reviewed` 等数据式调用只生成确认后的 ExecutionPlan，再交给 Exec。
+- `$noctis workflow=reviewed` 等数据式调用生成确认后的 ExecutionPlan；Exec 先物化为 pending `noctis.md`，再从该记录生成统一 ExecutionEntry。
+- `$noctis` 启动时当前 Agent 先展示项目内已有 pending、active、blocked 工作流供用户继续，也允许创建新计划；注册表模板只用于生成新候选，`default_workflow` 只作为推荐。
 - `$noctis $implement $code-review` 可提前显式加载能力，但仍需确认层级、Task 图和授权。
-- `$noctis continue` 或 `$noctis-continue` 从当前项目唯一未完成根记录进入 Exec；多个候选必须选择。
+- `$noctis continue` 或 `$noctis-continue` 先选择未完成状态机实例，再选择其中 active、ready 或 blocked 的 Task/Unit 入口；一个 Unit 可在不同 Track 上同时提供多条入口。
 - `$implement`、`$code-review` 和 `$verify` 仍可独立调用且不创建 `noctis.md`；只有经 Noctis/Exec 启动的单 Task 才持久化。
 
 执行记录与能力文档都由脚本创建和更新。`revision` 提供并发保护，稳定 slot/item 允许 Exec 在启用新能力时持久扩展已有文档，而不修改源模板或覆盖其他能力的内容。

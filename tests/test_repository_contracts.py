@@ -27,11 +27,13 @@ def assert_compatible_ports(
     case: unittest.TestCase,
     output: dict[str, Any],
     input_port: dict[str, Any],
+    *,
+    required_input: bool = True,
 ) -> None:
     case.assertEqual(output["type"], input_port["type"])
     case.assertTrue(set(output["formats"]) & set(input_port["formats"]))
     case.assertTrue(output["required"])
-    case.assertTrue(input_port["required"])
+    case.assertEqual(input_port["required"], required_input)
 
 
 class RepositoryContractTests(unittest.TestCase):
@@ -68,13 +70,20 @@ class RepositoryContractTests(unittest.TestCase):
         assert_compatible_ports(
             self,
             noctis["plan-workflow"]["outputs"]["execution-plan"],
-            execution["start-workflow"]["inputs"]["execution-plan"],
+            execution["materialize-workflow"]["inputs"]["execution-plan"],
         )
         assert_compatible_ports(
             self,
             continuation["continue-workflow"]["outputs"]["execution-entry"],
-            execution["resume-workflow"]["inputs"]["execution-entry"],
+            execution["execute-workflow"]["inputs"]["execution-entry"],
         )
+        for capability_id in ("materialize-workflow", "execute-workflow"):
+            assert_compatible_ports(
+                self,
+                execution[capability_id]["outputs"]["orchestration"],
+                continuation["continue-workflow"]["inputs"]["orchestration"],
+                required_input=False,
+            )
 
     def test_continue_can_scan_without_an_artifact_input(self) -> None:
         continuation = capabilities(

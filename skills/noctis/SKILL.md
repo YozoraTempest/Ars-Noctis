@@ -30,6 +30,8 @@ description: 交互规划编码、数据整理、文档生成等工作的最小 
 
 ## 交付计划
 
+当前 Agent 先调用 `noctis-exec entry` 扫描项目中已有的 pending、active 或 blocked 根 `noctis.md`。有多个状态机实例时先选根记录；一个 Unit 的不同 Track 可以同时暴露多个 Task 入口，再让用户选择具体断点，或从当前请求创建新计划。不要把 Workflow Template 当作已生成工作流。
+
 生成 ExecutionPlan v2，明确：
 
 - Task、Unit 或 Work 层级和根记录；
@@ -37,6 +39,6 @@ description: 交互规划编码、数据整理、文档生成等工作的最小 
 - Work/Unit 依赖图、Track 和目标项目；
 - 每个 Task 的 capability、executor、support、Artifact Binding 与记录路径。
 
-一次性展示结构、执行顺序、并行组和副作用，提供 `A 启动`、`B 调整`、`C 取消`。只有用户无歧义确认后，才激活 `noctis-exec` 的 `start-workflow` 并传递完整计划。
+一次性展示结构、执行顺序、并行组和副作用，提供 `A 启动`、`B 调整`、`C 取消`。只有用户无歧义确认后，才调用 `materialize-workflow` 写入 pending 状态机；随后对根记录调用 `entry`，把 ExecutionEntry 交给 `execute-workflow`。
 
 计划不单独持久化；Exec 创建的 `noctis.md` 是恢复入口。范围、依赖、provider、完成条件或授权变化时重新规划，不让 Exec 暗自修订。
