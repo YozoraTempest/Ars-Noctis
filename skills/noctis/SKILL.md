@@ -39,6 +39,6 @@ description: 交互规划编码、数据整理、文档生成等工作的最小 
 - Work/Unit 依赖图、Track 和目标项目；
 - 每个 Task 的 capability、executor、support、Artifact Binding 与记录路径。
 
-一次性展示结构、执行顺序、并行组和副作用，提供 `A 启动`、`B 调整`、`C 取消`。只有用户无歧义确认后，才调用 `materialize-workflow` 写入 pending 状态机；随后对根记录调用 `entry`，把 ExecutionEntry 交给 `execute-workflow`。
+只展示一条当前推荐的完整 Task 流程计划，包含结构、执行顺序、并行组和副作用，不并列多个候选流程。提供 `A 启动`、`B 调整`、`C 取消`；用户调整时用一条新的完整流程替换当前候选。只有用户无歧义确认后，才调用 `materialize-workflow` 写入 pending 状态机；随后对根记录调用 `entry`，把 ExecutionEntry 交给 `execute-workflow`。
 
 计划不单独持久化；Exec 创建的 `noctis.md` 是恢复入口。范围、依赖、provider、完成条件或授权变化时重新规划，不让 Exec 暗自修订。

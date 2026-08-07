@@ -56,4 +56,4 @@ Task 再包含 capability、binding、artifactBinding 和 record。artifactBindi
 - 每个 Task 的 capability、Track、executor、support、Artifact 输入输出和记录文件；
 - 完成条件，以及测试、提交、推送、部署和外部写入授权。
 
-用户选择调整时重新生成并展示完整计划。确认后把 ExecutionPlan 原样交给 `noctis-exec` 的 `materialize-workflow`，并明确标记本次调用已经确认。物化成功后调用 `entry --record <root>`，再把 ExecutionEntry 原样交给 `execute-workflow`；正常启动与 Continue 恢复共用这一执行输入。
+始终只展示一条完整 Task 流程；用户选择调整时生成一条新的完整流程替换当前候选，不同时展示多个方案。确认后把 ExecutionPlan 原样交给 `noctis-exec` 的 `materialize-workflow`，并明确标记本次调用已经确认。物化成功后调用 `entry --record <root>`，再把 ExecutionEntry 原样交给 `execute-workflow`；正常启动与 Continue 恢复共用这一执行输入。

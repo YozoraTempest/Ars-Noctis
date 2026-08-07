@@ -1,6 +1,8 @@
 # 恢复执行流程
 
-只在 active Review/Verify 已记录可达问题或失败，且用户已经确认修复范围后插入恢复流程。未授权时保持当前 Task，不创建 Fix。
+只在 active Review/Verify 返回 `recovery-requested`、已记录可达问题或失败，且用户已经确认修复范围后插入恢复流程。未授权时保持当前 Task，不创建 Fix。executor 只提供 Artifact 和稳定 evidence ID；Task 子图由 Exec 构造，不接受 executor 提供的依赖图。
+
+插入前，使用来源 Artifact 的 provider 工具读取证据，再通过目标 Skill 的公开文档工具或 augmentation 写入 Fix、复审或重验需要的关联与恢复上下文。来源 Review/Verify 文档保持原判定不变；不得直接解析或拼接目标 Markdown。把这些协调修改与 splice 后的 `noctis.md` 放入 Exec 的同一编排检查点。
 
 ## 插入恢复子图
 

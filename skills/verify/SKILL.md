@@ -1,6 +1,6 @@
 ---
 name: verify
-description: 基于用户逐项确认的独立场景执行实际行为验收，组合人工、AI 与 AI 辅助模式，并记录可观察证据和判定。用于显式验收或 Noctis Exec 中 capability 为 verify 的 active Task；不编写业务代码、单元测试，也不做静态代码审查。
+description: 基于用户逐项确认的独立场景执行实际行为验收，组合人工、AI 与 AI 辅助模式，并记录可观察证据和判定。用于显式验收或 Noctis Exec 中 capability 为 verify 的 active Task；不编写业务代码、单元测试，不做静态代码审查，也不推进编排状态。
 ---
 
 # Verify
@@ -9,9 +9,9 @@ description: 基于用户逐项确认的独立场景执行实际行为验收，�
 
 ## 进入 Task
 
-由 Noctis Exec 调度时用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `verify` 时继续；否则返回 deferred，不创建记录、操作环境或迁移状态。存在单个 `resolvedInputs.review` 或多来源 `resolvedInputs.reviews` 时，只把完整集合用作审查范围和已知风险来源，不把代码审查结论当作行为证据。独立调用时只执行用户明确要求的验收，不注入 Review 或 Fix。
+由 Noctis Exec 调度时用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `verify` 时继续；否则返回 deferred，不创建记录、操作环境或迁移状态。存在单个 `resolvedInputs.review` 或多来源 `resolvedInputs.reviews` 时，只把完整集合用作审查范围和已知风险来源，不把代码审查结论当作行为证据。独立调用时直接使用用户给出的验收目标或场景，不要求 `noctis.md`、Unit 场景或 Task `record.path`，也不注入 Review 或 Fix。
 
-使用 verify manifest 中 `scope: unit` 的 scenarios document，从当前 Unit `noctis.md` 同级读取 `scenarios.md`。规划 Skill 已生成场景时必须沿用；文件不存在时才用 `scripts/scenarios.py --task <unit-record>` 创建后备场景。不得从 Track 路径猜测，不得覆盖既有场景，也不得根据实现细节反向编写容易通过的场景。
+Noctis 模式使用 verify manifest 中 `scope: unit` 的 scenarios document，从当前 Unit `noctis.md` 同级读取 `scenarios.md`。规划 Skill 已生成场景时必须沿用；文件不存在时才用 `scripts/scenarios.py --task <unit-record>` 创建后备场景。不得从 Track 路径猜测，不得覆盖既有场景，也不得根据实现细节反向编写容易通过的场景。独立模式没有既有场景时，先提出场景并由用户确认，不创建 Noctis 文档。
 
 ## 确认验收方案
 
@@ -31,7 +31,7 @@ description: 基于用户逐项确认的独立场景执行实际行为验收，�
 
 ## 执行与记录
 
-使用 `scripts/verification.py` 管理 Task `record.path` 指向的 `verification.md`。先在 Plan 记录确认后的场景、模式与证据策略，再按稳定 ID 向 Results 追加结果。
+仅在 Noctis Task 或用户明确要求验收记录时，使用 `scripts/verification.py` 管理 `record.path` 指向的 `verification.md`。先在 Plan 记录确认后的场景、模式与证据策略，再按稳定 ID 向 Results 追加结果。
 
 证据策略：
 
@@ -43,11 +43,11 @@ description: 基于用户逐项确认的独立场景执行实际行为验收，�
 
 ## 处理结果
 
-- 全部 passed：完成当前 Verify Task，并把最终 `verification.md` 发布为 `ars.verification@1` ArtifactRef。
-- 有 failed：一次性让用户确认修复范围；确认后用 Noctis Exec `orchestration splice` 的 `sourceArtifacts` 发布当前 verification 记录并插入 Fix、必要的 Review 和新 Verify Task，再把原 pending 后继接到新 Verify。
-- 有 blocked：以 blocked 结束当前 Task。
-- 有 pending：保持 active，等待人工判定。
+- 全部 passed：先提交 verification 记录；Noctis 模式返回 `completed` 的 `ExecutorResult v1`、有序自有提交和最终 `ars.verification@1` ArtifactRef，独立模式直接返回验收结果。
+- 有 failed：一次性让用户确认修复范围；确认后先提交 verification 记录，再返回 `recovery-requested`，携带有序自有提交、`verification-failures`、失败 scenario ID 和 verification Artifact。不要设计或插入恢复 Task。
+- 有 blocked：返回 blocked。
+- 有 pending：不迁移状态，继续等待人工判定。
 
 修复后的新 Verify Task 只重验失败场景和 Fix 直接影响的场景；再次一次性确认范围，不自动循环。
 
-场景方案、整批结果和延后人工判定分别创建必要的 `docs:` 检查点并附 `Noctis-Task: <task-id>` trailer。未经授权不提交敏感证据、不修改业务代码、不推送、不部署。
+使用独立 `docs:` 提交维护 verification 记录，并附 `Noctis-Task: <task-id>` trailer；只暂存 Verify 自有文档和经授权的证据，不纳入业务代码或 `noctis.md`。不要调用 Noctis Exec 的 `finish`、`splice` 或其他生命周期写命令。Noctis Exec 负责应用结果、提交编排状态和选择后继。未经授权不提交敏感证据、不修改业务代码、不推送、不部署。
