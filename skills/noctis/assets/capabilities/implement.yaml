@@ -2,7 +2,7 @@ version: 1
 kind: capability
 id: implement
 contract: 1
-summary: 实现一个 active Task 的既定范围并登记本地业务提交。
+summary: 实现一个 active Task 的既定范围并登记至少一个有序本地业务提交。
 entry:
   task_status: active
   capability: implement

@@ -1,7 +1,7 @@
 interface:
   display_name: "Implement"
-  short_description: "执行实现或已确认修复 Task，并维护 Step 与独立提交记录"
-  default_prompt: "使用 $implement 完成当前实现或修复 Task，并记录 Step 与边界清晰的本地提交。"
+  short_description: "执行实现或证据化修复任务，并维护独立提交、实施记录与断点恢复证据"
+  default_prompt: "使用 $implement 完成当前实现或证据化修复，创建业务提交；有 Noctis Task 时再维护实施记录并返回执行结果。"
 
 policy:
   allow_implicit_invocation: false
