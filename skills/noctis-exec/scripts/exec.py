@@ -440,7 +440,14 @@ def _artifact_format(value: Any, context: str) -> str:
 def _artifact_port(value: Any, context: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise NoctisError(f"{context} must be an object")
-    _exact_keys(value, {"type", "formats", "required"}, context)
+    missing = sorted({"type", "formats", "required"} - set(value))
+    unknown = sorted(
+        set(value) - {"type", "formats", "required", "cardinality"}
+    )
+    if missing:
+        raise NoctisError(f"{context} is missing: {', '.join(missing)}")
+    if unknown:
+        raise NoctisError(f"{context} has unknown fields: {', '.join(unknown)}")
     formats = _string_list(value["formats"], f"{context}.formats", required=True)
     normalized_formats = [
         _artifact_format(item, f"{context}.formats item") for item in formats
@@ -448,11 +455,17 @@ def _artifact_port(value: Any, context: str) -> dict[str, Any]:
     required = value["required"]
     if not isinstance(required, bool):
         raise NoctisError(f"{context}.required must be a boolean")
-    return {
+    cardinality = value.get("cardinality", "one")
+    if cardinality not in ("one", "many"):
+        raise NoctisError(f"{context}.cardinality must be one or many")
+    port = {
         "type": _identifier(value["type"], f"{context}.type"),
         "formats": normalized_formats,
         "required": required,
     }
+    if cardinality == "many":
+        port["cardinality"] = "many"
+    return port
 
 
 def _artifact_ref(
@@ -495,13 +508,22 @@ def _artifact_binding(value: Any, context: str) -> dict[str, Any]:
         input_id = _identifier(input_id, f"{context} input id")
         if not isinstance(raw, dict):
             raise NoctisError(f"{context}.inputs.{input_id} must be an object")
-        _exact_keys(
-            raw,
-            {"type", "formats", "required", "source"},
-            f"{context}.inputs.{input_id}",
+        missing = sorted({"type", "formats", "required", "source"} - set(raw))
+        unknown = sorted(
+            set(raw)
+            - {"type", "formats", "required", "cardinality", "source"}
         )
+        if missing:
+            raise NoctisError(
+                f"{context}.inputs.{input_id} is missing: {', '.join(missing)}"
+            )
+        if unknown:
+            raise NoctisError(
+                f"{context}.inputs.{input_id} has unknown fields: "
+                + ", ".join(unknown)
+            )
         port = _artifact_port(
-            {key: raw[key] for key in ("type", "formats", "required")},
+            {key: value for key, value in raw.items() if key != "source"},
             f"{context}.inputs.{input_id}",
         )
         source = raw["source"]
@@ -510,32 +532,30 @@ def _artifact_binding(value: Any, context: str) -> dict[str, Any]:
                 raise NoctisError(
                     f"{context}.inputs.{input_id}.source is required"
                 )
+        elif port.get("cardinality") == "many":
+            if not isinstance(source, list) or not source:
+                raise NoctisError(
+                    f"{context}.inputs.{input_id}.source must be a non-empty list"
+                )
+            source = [
+                _normalize_artifact_source(
+                    item,
+                    f"{context}.inputs.{input_id}.source[{index}]",
+                    port,
+                )
+                for index, item in enumerate(source)
+            ]
+            if len({json.dumps(item, sort_keys=True) for item in source}) != len(source):
+                raise NoctisError(
+                    f"{context}.inputs.{input_id}.source contains duplicates"
+                )
         elif not isinstance(source, dict):
             raise NoctisError(
                 f"{context}.inputs.{input_id}.source must be null or an object"
             )
-        elif set(source) == {"task", "output"}:
-            source = {
-                "task": _item_id(
-                    source["task"], f"{context}.inputs.{input_id}.source.task"
-                ),
-                "output": _identifier(
-                    source["output"],
-                    f"{context}.inputs.{input_id}.source.output",
-                ),
-            }
-        elif set(source) == {"artifact"}:
-            source = {
-                "artifact": _artifact_ref(
-                    source["artifact"],
-                    f"{context}.inputs.{input_id}.source.artifact",
-                    expected=port,
-                )
-            }
         else:
-            raise NoctisError(
-                f"{context}.inputs.{input_id}.source must reference a Task output "
-                "or contain one artifact"
+            source = _normalize_artifact_source(
+                source, f"{context}.inputs.{input_id}.source", port
             )
         normalized_inputs[input_id] = {**port, "source": source}
 
@@ -546,6 +566,27 @@ def _artifact_binding(value: Any, context: str) -> dict[str, Any]:
             raw, f"{context}.outputs.{output_id}"
         )
     return {"inputs": normalized_inputs, "outputs": normalized_outputs}
+
+
+def _normalize_artifact_source(
+    source: Any, context: str, port: dict[str, Any]
+) -> dict[str, Any]:
+    if not isinstance(source, dict):
+        raise NoctisError(f"{context} must be an object")
+    if set(source) == {"task", "output"}:
+        return {
+            "task": _item_id(source["task"], f"{context}.task"),
+            "output": _identifier(source["output"], f"{context}.output"),
+        }
+    if set(source) == {"artifact"}:
+        return {
+            "artifact": _artifact_ref(
+                source["artifact"], f"{context}.artifact", expected=port
+            )
+        }
+    raise NoctisError(
+        f"{context} must reference a Task output or contain one artifact"
+    )
 
 
 def _artifact_results(
@@ -571,14 +612,27 @@ def _artifact_results(
             raise NoctisError(
                 f"{context} is missing required outputs: " + ", ".join(missing)
             )
-    return {
-        output_id: _artifact_ref(
-            artifact,
-            f"{context}.{output_id}",
-            expected=outputs[output_id],
-        )
-        for output_id, artifact in value.items()
-    }
+    normalized: dict[str, Any] = {}
+    for output_id, artifact in value.items():
+        port = outputs[output_id]
+        if port.get("cardinality") == "many":
+            if not isinstance(artifact, list) or not artifact:
+                raise NoctisError(f"{context}.{output_id} must be a non-empty list")
+            normalized[output_id] = [
+                _artifact_ref(
+                    item,
+                    f"{context}.{output_id}[{index}]",
+                    expected=port,
+                )
+                for index, item in enumerate(artifact)
+            ]
+        else:
+            normalized[output_id] = _artifact_ref(
+                artifact,
+                f"{context}.{output_id}",
+                expected=port,
+            )
+    return normalized
 
 
 def _depends_on(value: Any, context: str) -> list[str]:
@@ -659,9 +713,10 @@ def _normalize_tasks(
         if task_id in items:
             raise NoctisError(f"duplicate task id: {task_id}")
         capability = _identifier(raw["capability"], f"{context}.capability")
-        if capability == "fix" and not allow_fix:
+        if capability in ("fix-review", "fix-verification") and not allow_fix:
             raise NoctisError(
-                "fix is a recovery capability and cannot appear in an initial Unit"
+                f"{capability} is a recovery capability and cannot appear "
+                "in an initial Unit"
             )
         track = raw["track"]
         if track is not None:
@@ -796,37 +851,39 @@ def _validate_graph(items: Any, level: str) -> dict[str, Any]:
         for item_id, item in items.items():
             for input_id, port in item["artifact_binding"]["inputs"].items():
                 source = port["source"]
-                if source is None or "artifact" in source:
-                    continue
-                source_task = source["task"]
-                source_output = source["output"]
-                if source_task not in items:
-                    raise NoctisError(
-                        f"unit task '{item_id}' input '{input_id}' references "
-                        f"unknown task '{source_task}'"
-                    )
-                if source_task not in item["depends_on"]:
-                    raise NoctisError(
-                        f"unit task '{item_id}' input '{input_id}' must reference "
-                        "a direct dependency"
-                    )
-                source_outputs = items[source_task]["artifact_binding"]["outputs"]
-                if source_output not in source_outputs:
-                    raise NoctisError(
-                        f"unit task '{item_id}' input '{input_id}' references "
-                        f"unknown output '{source_task}.{source_output}'"
-                    )
-                output_port = source_outputs[source_output]
-                if output_port["type"] != port["type"]:
-                    raise NoctisError(
-                        f"unit task '{item_id}' input '{input_id}' has "
-                        "incompatible artifact types"
-                    )
-                if not set(output_port["formats"]) & set(port["formats"]):
-                    raise NoctisError(
-                        f"unit task '{item_id}' input '{input_id}' requires "
-                        "an explicit adapter Task"
-                    )
+                sources = source if isinstance(source, list) else [source]
+                for source_item in sources:
+                    if source_item is None or "artifact" in source_item:
+                        continue
+                    source_task = source_item["task"]
+                    source_output = source_item["output"]
+                    if source_task not in items:
+                        raise NoctisError(
+                            f"unit task '{item_id}' input '{input_id}' references "
+                            f"unknown task '{source_task}'"
+                        )
+                    if source_task not in item["depends_on"]:
+                        raise NoctisError(
+                            f"unit task '{item_id}' input '{input_id}' must reference "
+                            "a direct dependency"
+                        )
+                    source_outputs = items[source_task]["artifact_binding"]["outputs"]
+                    if source_output not in source_outputs:
+                        raise NoctisError(
+                            f"unit task '{item_id}' input '{input_id}' references "
+                            f"unknown output '{source_task}.{source_output}'"
+                        )
+                    output_port = source_outputs[source_output]
+                    if output_port["type"] != port["type"]:
+                        raise NoctisError(
+                            f"unit task '{item_id}' input '{input_id}' has "
+                            "incompatible artifact types"
+                        )
+                    if not set(output_port["formats"]) & set(port["formats"]):
+                        raise NoctisError(
+                            f"unit task '{item_id}' input '{input_id}' requires "
+                            "an explicit adapter Task"
+                        )
     for item_id, item in items.items():
         if item["status"] == "active":
             unfinished = [
@@ -1445,24 +1502,29 @@ def _resolved_inputs(
     unresolved: list[str] = []
     for input_id, port in item["artifact_binding"]["inputs"].items():
         source = port["source"]
-        artifact: dict[str, Any] | None = None
-        if source is not None and "artifact" in source:
-            artifact = source["artifact"]
-            resolved_source: dict[str, Any] = {"external": True}
-        elif source is not None:
-            source_task = items[source["task"]]
-            artifact = source_task["artifacts"].get(source["output"])
-            resolved_source = {
-                "task": source["task"],
-                "output": source["output"],
-                "provider": source_task["binding"]["executor"]["provider"],
-                "record": source_task["record"],
-            }
-        if artifact is not None:
-            resolved[input_id] = {
-                "artifact": artifact,
-                "source": resolved_source,
-            }
+        sources = source if isinstance(source, list) else [source]
+        values = []
+        for source_item in sources:
+            if source_item is None:
+                continue
+            if "artifact" in source_item:
+                artifact = source_item["artifact"]
+                resolved_source: dict[str, Any] = {"external": True}
+            else:
+                source_task = items[source_item["task"]]
+                artifact = source_task["artifacts"].get(source_item["output"])
+                resolved_source = {
+                    "task": source_item["task"],
+                    "output": source_item["output"],
+                    "provider": source_task["binding"]["executor"]["provider"],
+                    "record": source_task["record"],
+                }
+            if artifact is not None:
+                values.append({"artifact": artifact, "source": resolved_source})
+        if values:
+            resolved[input_id] = (
+                values if port.get("cardinality") == "many" else values[0]
+            )
         elif port["required"]:
             unresolved.append(input_id)
     return resolved, sorted(unresolved)
@@ -1824,6 +1886,31 @@ def prepare_entry(args: argparse.Namespace) -> dict[str, Any]:
     )
     root = _find_project_root(start)
     records, warnings = _read_project_orchestrations(root)
+    if args.list:
+        candidates = _root_candidates(records)
+        if args.record is not None:
+            requested = args.record if args.record.is_absolute() else root / args.record
+            path = _orchestration_path(requested)
+            candidates = [
+                (candidate, metadata)
+                for candidate, metadata in records
+                if candidate == path and metadata["status"] != "completed"
+            ]
+            if not candidates:
+                raise NoctisError(f"entry record does not exist or is completed: {path}")
+        return {
+            "ok": True,
+            "status": "candidates",
+            "entrySet": {
+                "version": 1,
+                "projectRoot": str(root),
+                "orchestrations": [
+                    _entry_summary(root, path, metadata)
+                    for path, metadata in candidates
+                ],
+            },
+            "warnings": warnings,
+        }
     if args.record is not None:
         requested = args.record if args.record.is_absolute() else root / args.record
         path = _orchestration_path(requested)
@@ -2169,6 +2256,9 @@ def parse_args() -> argparse.Namespace:
     entry.add_argument("--start", type=Path, default=Path.cwd())
     entry.add_argument("--record", type=Path)
     entry.add_argument("--id")
+    entry.add_argument(
+        "--list", action="store_true", help="Return all entry candidates without selecting."
+    )
 
     workflow = groups.add_parser(
         "workflow", help="Materialize a confirmed ExecutionPlan as pending records."

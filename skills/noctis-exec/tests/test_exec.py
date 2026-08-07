@@ -47,7 +47,8 @@ def task(
 ) -> dict:
     document = {
         "implement": "implementation",
-        "fix": "implementation",
+        "fix-review": "implementation",
+        "fix-verification": "implementation",
         "review": "review",
         "verify": "verification",
     }[capability]
@@ -567,6 +568,14 @@ class ToolchainTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(inspected.stdout)["ready"], ["U01.T01", "U01.T02"]
             )
+            discovered = self.run_tool("entry", "--start", str(root), "--list")
+            entry_set = json.loads(discovered.stdout)["entrySet"]
+            self.assertEqual(entry_set["version"], 1)
+            self.assertEqual(len(entry_set["orchestrations"]), 1)
+            self.assertEqual(
+                [entry["id"] for entry in entry_set["orchestrations"][0]["entries"]],
+                ["U01.T01", "U01.T02"],
+            )
             selectable = self.run_tool(
                 "entry", "--record", str(unit / "noctis.md")
             )
@@ -624,6 +633,13 @@ class ToolchainTests(unittest.TestCase):
             task("U01.T02", "review", "map-frontend", ["U01.T01"]),
             task("U01.T03", "verify", "integration", ["U01.T02"]),
         ]
+        tasks[1]["artifactBinding"]["outputs"] = {
+            "review": {
+                "type": "review-record",
+                "formats": ["ars.review@1"],
+                "required": True,
+            }
+        }
         with tempfile.TemporaryDirectory() as directory:
             unit = self.create_unit(Path(directory), tasks)
             self.transition("start", unit, "U01.T01", 1)
@@ -631,9 +647,42 @@ class ToolchainTests(unittest.TestCase):
             self.transition("start", unit, "U01.T02", 3)
 
             inserted = [
-                task("U01.T04", "fix", "map-frontend", ["U01.T02"]),
+                task("U01.T04", "fix-review", "map-frontend", ["U01.T02"]),
                 task("U01.T05", "review", "map-frontend", ["U01.T04"]),
             ]
+            inserted[0]["artifactBinding"] = {
+                "inputs": {
+                    "review": {
+                        "type": "review-record",
+                        "formats": ["ars.review@1"],
+                        "required": True,
+                        "source": {"task": "U01.T02", "output": "review"},
+                    }
+                },
+                "outputs": {
+                    "implementation": {
+                        "type": "implementation-record",
+                        "formats": ["ars.implementation@1"],
+                        "required": True,
+                    }
+                },
+            }
+            inserted[1]["artifactBinding"]["inputs"] = {
+                "implementation": {
+                    "type": "implementation-record",
+                    "formats": ["ars.implementation@1"],
+                    "required": True,
+                    "source": {"task": "U01.T04", "output": "implementation"},
+                }
+            }
+            review_artifact = {
+                "review": {
+                    "type": "review-record",
+                    "format": "ars.review@1",
+                    "location": "tracks/map-frontend/review.md",
+                    "revision": "4",
+                }
+            }
             spliced = self.run_tool(
                 "orchestration",
                 "splice",
@@ -645,7 +694,7 @@ class ToolchainTests(unittest.TestCase):
                 "4",
                 input_value={
                     "sourceOutcome": "findings-accepted",
-                    "sourceArtifacts": {},
+                    "sourceArtifacts": review_artifact,
                     "tasks": inserted,
                     "tail": "U01.T05",
                 },
@@ -681,10 +730,123 @@ class ToolchainTests(unittest.TestCase):
             self.assertIn("revision mismatch", stale.stderr)
 
             self.transition("start", unit, "U01.T04", 5)
-            self.transition("finish", unit, "U01.T04", 6)
+            fix_artifact = {
+                "implementation": {
+                    "type": "implementation-record",
+                    "format": "ars.implementation@1",
+                    "location": "tracks/map-frontend/implementation.md",
+                    "revision": "fix:U01.T04",
+                }
+            }
+            self.transition(
+                "finish", unit, "U01.T04", 6, artifacts=fix_artifact
+            )
             self.transition("start", unit, "U01.T05", 7)
             rereviewed = self.transition("finish", unit, "U01.T05", 8)
             self.assertEqual(rereviewed["ready"], ["U01.T03"])
+
+    def test_verification_failure_splice_resolves_evidence_for_fix(self) -> None:
+        tasks = [
+            task("U01.T01", "implement", "map-frontend", []),
+            task("U01.T02", "verify", "integration", ["U01.T01"]),
+            task("U01.T03", "review", "integration", ["U01.T02"]),
+        ]
+        tasks[1]["artifactBinding"]["outputs"] = {
+            "verification": {
+                "type": "verification-record",
+                "formats": ["ars.verification@1"],
+                "required": True,
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Noctis").mkdir()
+            (root / "Noctis" / "registry.yaml").write_text(
+                "version: 3\n", encoding="utf-8"
+            )
+            unit = self.create_unit(root, tasks)
+            self.transition("start", unit, "U01.T01", 1)
+            self.transition("finish", unit, "U01.T01", 2)
+            self.transition("start", unit, "U01.T02", 3)
+
+            repair = task(
+                "U01.T04", "fix-verification", "map-frontend", ["U01.T02"]
+            )
+            repair["artifactBinding"] = {
+                "inputs": {
+                    "verification": {
+                        "type": "verification-record",
+                        "formats": ["ars.verification@1"],
+                        "required": True,
+                        "source": {"task": "U01.T02", "output": "verification"},
+                    }
+                },
+                "outputs": {
+                    "implementation": {
+                        "type": "implementation-record",
+                        "formats": ["ars.implementation@1"],
+                        "required": True,
+                    }
+                },
+            }
+            reverify = task(
+                "U01.T05", "verify", "integration", ["U01.T04"]
+            )
+            evidence = {
+                "verification": {
+                    "type": "verification-record",
+                    "format": "ars.verification@1",
+                    "location": "tracks/integration/verification.md",
+                    "revision": "4",
+                }
+            }
+            spliced = self.run_tool(
+                "orchestration",
+                "splice",
+                "--path",
+                str(unit),
+                "--after",
+                "U01.T02",
+                "--expected-revision",
+                "4",
+                input_value={
+                    "sourceOutcome": "failures-accepted",
+                    "sourceArtifacts": evidence,
+                    "tasks": [repair, reverify],
+                    "tail": "U01.T05",
+                },
+            )
+            self.assertEqual(json.loads(spliced.stdout)["rewired"], ["U01.T03"])
+
+            prepared = self.run_tool(
+                "entry",
+                "--record",
+                str(unit / "noctis.md"),
+                "--id",
+                "U01.T04",
+            )
+            target = json.loads(prepared.stdout)["entry"]["target"]
+            self.assertEqual(
+                target["resolvedInputs"]["verification"]["artifact"],
+                evidence["verification"],
+            )
+            self.assertEqual(target["unresolvedInputs"], [])
+
+            self.transition("start", unit, "U01.T04", 5)
+            implementation = {
+                "implementation": {
+                    "type": "implementation-record",
+                    "format": "ars.implementation@1",
+                    "location": "tracks/map-frontend/implementation.md",
+                    "revision": "fix:U01.T04",
+                }
+            }
+            self.transition(
+                "finish", unit, "U01.T04", 6, artifacts=implementation
+            )
+            self.transition("start", unit, "U01.T05", 7)
+            reverified = self.transition("finish", unit, "U01.T05", 8)
+            self.assertEqual(reverified["ready"], ["U01.T03"])
 
     def test_work_orchestrates_units_serially(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -749,14 +911,14 @@ class ToolchainTests(unittest.TestCase):
             )
             self.assertIn("cycle", failed.stderr)
 
-            repair = [task("U01.T03", "fix", "map-frontend", [])]
+            repair = [task("U01.T03", "fix-review", "map-frontend", [])]
             failed = self.run_tool(
                 "orchestration",
                 "create",
                 "--level",
                 "unit",
                 "--path",
-                str(root / "fix"),
+                str(root / "fix-review"),
                 input_value=unit_payload(repair),
                 ok=False,
             )
@@ -843,6 +1005,82 @@ class ToolchainTests(unittest.TestCase):
             )
             self.assertEqual(target["unresolvedInputs"], [])
             self.transition("start", unit, "U01.T02", 3)
+
+    def test_many_input_resolves_every_direct_dependency(self) -> None:
+        first = task("U01.T01", "implement", "map-frontend", [])
+        second = task("U01.T02", "implement", "lowcode-template", [])
+        for producer in (first, second):
+            producer["artifactBinding"]["outputs"] = {
+                "implementation": {
+                    "type": "implementation-record",
+                    "formats": ["ars.implementation@1"],
+                    "required": True,
+                }
+            }
+        integration = task(
+            "U01.T03",
+            "review",
+            "integration",
+            ["U01.T01", "U01.T02"],
+        )
+        integration["artifactBinding"]["inputs"] = {
+            "implementations": {
+                "type": "implementation-record",
+                "formats": ["ars.implementation@1"],
+                "required": True,
+                "cardinality": "many",
+                "source": [
+                    {"task": "U01.T01", "output": "implementation"},
+                    {"task": "U01.T02", "output": "implementation"},
+                ],
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Noctis").mkdir()
+            (root / "Noctis" / "registry.yaml").write_text(
+                "version: 3\n", encoding="utf-8"
+            )
+            unit = self.create_unit(root, [first, second, integration])
+            artifacts = []
+            revision = 1
+            for task_id, track in (
+                ("U01.T01", "map-frontend"),
+                ("U01.T02", "lowcode-template"),
+            ):
+                self.transition("start", unit, task_id, revision)
+                revision += 1
+                artifact = {
+                    "implementation": {
+                        "type": "implementation-record",
+                        "format": "ars.implementation@1",
+                        "location": f"tracks/{track}/implementation.md",
+                        "revision": f"commit:{task_id}",
+                    }
+                }
+                artifacts.append(artifact["implementation"])
+                self.transition(
+                    "finish", unit, task_id, revision, artifacts=artifact
+                )
+                revision += 1
+
+            prepared = self.run_tool(
+                "entry",
+                "--record",
+                str(unit / "noctis.md"),
+                "--id",
+                "U01.T03",
+            )
+            resolved = json.loads(prepared.stdout)["entry"]["target"][
+                "resolvedInputs"
+            ]["implementations"]
+            self.assertEqual([value["artifact"] for value in resolved], artifacts)
+            self.assertEqual(
+                [value["source"]["task"] for value in resolved],
+                ["U01.T01", "U01.T02"],
+            )
+
+            self.transition("start", unit, "U01.T03", revision)
 
     def test_external_artifact_is_resolved_for_a_single_task(self) -> None:
         payload = task_payload()

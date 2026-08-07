@@ -37,7 +37,7 @@ Noctis 原生 Ars 在根目录增加 `ars.yaml`。manifest 只声明 executor/su
 - 仓库不维护中心运行时注册表。每个原生 Ars 用同级 `ars.yaml` 自注册；Noctis 的 capability/support contract 与示例保存在 `noctis/assets/`。
 - `$noctis init` 根据当前可用 Ars manifest 和用户选择，在目标项目生成 `Noctis/registry.yaml`。已有内容不同时必须先展示差异并再次确认，禁止静默覆盖。
 - 同一 capability/support 发现多个 provider 时保留选择，不通过路径顺序暗中决定。没有 manifest 的第三方 Skill 只能由用户提供手工映射。
-- Workflow Template 声明 Task capability 与依赖图，允许多个 Task 使用同一 capability。`fix` 只允许在异常时动态插入，不得加入正常模板。
+- Workflow Template 声明 Task capability 与依赖图，允许多个 Task 使用同一 capability。`fix-review` 和 `fix-verification` 只允许在异常时动态插入，不得加入正常模板。
 - Workflow 的 input port 只绑定直接前置 Task 的 output port；类型相同且格式有交集时直接传递，否则插入显式 Adapter Task。
 - Unit 创建时把每个 Task 的 capability contract、executor、support、provider、Artifact Binding 和记录路径固化到 `noctis.md`；恢复默认沿用快照。
 

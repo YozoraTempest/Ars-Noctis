@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "cases": [
+    {"id": "ars-create", "skill": "ars", "prompt": "$ars create skill：创建一个可被 Noctis 调度的数据清洗 Skill。", "should_trigger": true},
+    {"id": "ars-validate", "skill": "ars", "prompt": "检查 skills/report-export 是否是有效的 Noctis 原生 Ars。", "should_trigger": true},
+    {"id": "ars-existing", "skill": "ars", "prompt": "把这个已有的第三方 Skill 接入 Noctis，但不要修改它。", "should_trigger": false},
+    {"id": "ars-ordinary", "skill": "ars", "prompt": "修复报表导出脚本的空指针。", "should_trigger": false},
+
+    {"id": "to-ars-owned", "skill": "to-ars", "prompt": "$to-ars 把这个旧 Skill 的 noctis.yaml 迁移成 ars.yaml。", "should_trigger": true},
+    {"id": "to-ars-adapter", "skill": "to-ars", "prompt": "为只读的 OpenSpec Skill 创建非侵入 Ars Adapter。", "should_trigger": true},
+    {"id": "to-ars-new", "skill": "to-ars", "prompt": "从零创建一个新的原生 Ars Skill。", "should_trigger": false},
+    {"id": "to-ars-use", "skill": "to-ars", "prompt": "运行现有的 PDF Skill 合并两个文件。", "should_trigger": false},
+
+    {"id": "noctis-plan", "skill": "noctis", "prompt": "$noctis 为两个仓库的实现、审查和验收安排一个可恢复 Unit。", "should_trigger": true},
+    {"id": "noctis-init", "skill": "noctis", "prompt": "$noctis init 初始化当前项目的 Ars 注册表。", "should_trigger": true},
+    {"id": "noctis-atomic", "skill": "noctis", "prompt": "只修改这一行配置，不需要编排或恢复。", "should_trigger": false},
+    {"id": "noctis-status", "skill": "noctis", "prompt": "读取现有 noctis.md 并从阻塞处继续。", "should_trigger": false},
+
+    {"id": "continue-explicit", "skill": "noctis-continue", "prompt": "$noctis-continue 扫描当前项目，列出可以恢复的入口。", "should_trigger": true},
+    {"id": "continue-switch", "skill": "noctis-continue", "prompt": "$noctis continue，我换了工作树，需要选择遗留 Task 入口。", "should_trigger": true},
+    {"id": "continue-new", "skill": "noctis-continue", "prompt": "为一个新需求设计 Implement、Review、Verify 依赖图。", "should_trigger": false},
+    {"id": "continue-edit", "skill": "noctis-continue", "prompt": "直接把 blocked Task 改成 active。", "should_trigger": false},
+
+    {"id": "exec-materialize", "skill": "noctis-exec", "prompt": "$noctis-exec 物化这份已经确认的 ExecutionPlan。", "should_trigger": true},
+    {"id": "exec-entry", "skill": "noctis-exec", "prompt": "$noctis-exec 根据这个 ExecutionEntry 推进当前 Task。", "should_trigger": true},
+    {"id": "exec-plan", "skill": "noctis-exec", "prompt": "帮我决定应该使用哪些 Workflow Template。", "should_trigger": false},
+    {"id": "exec-business", "skill": "noctis-exec", "prompt": "实现客户类型管理页面。", "should_trigger": false},
+
+    {"id": "implement-task", "skill": "implement", "prompt": "$implement 完成当前 active implement Task 并创建本地提交。", "should_trigger": true},
+    {"id": "implement-fix", "skill": "implement", "prompt": "$implement 处理 resolvedInputs.review 中用户接受的 finding。", "should_trigger": true},
+    {"id": "implement-review", "skill": "implement", "prompt": "只审查这个提交，列出正确性问题，不要修改。", "should_trigger": false},
+    {"id": "implement-verify", "skill": "implement", "prompt": "在浏览器里验收登录流程并截图。", "should_trigger": false},
+
+    {"id": "review-task", "skill": "code-review", "prompt": "$code-review 审查当前 Task 登记的精确提交。", "should_trigger": true},
+    {"id": "review-integration", "skill": "code-review", "prompt": "$code-review 检查这两个 Track 的跨仓库契约和组合冲突。", "should_trigger": true},
+    {"id": "review-fix", "skill": "code-review", "prompt": "修复审查中已经接受的三个问题。", "should_trigger": false},
+    {"id": "review-test", "skill": "code-review", "prompt": "运行完整测试并确认行为是否通过。", "should_trigger": false},
+
+    {"id": "verify-task", "skill": "verify", "prompt": "$verify 按已确认场景执行当前行为验收。", "should_trigger": true},
+    {"id": "verify-assisted", "skill": "verify", "prompt": "$verify 打开页面准备数据，由我做最终判定。", "should_trigger": true},
+    {"id": "verify-unit", "skill": "verify", "prompt": "为这个函数补三个单元测试。", "should_trigger": false},
+    {"id": "verify-static", "skill": "verify", "prompt": "静态检查这段权限代码是否存在漏洞。", "should_trigger": false}
+  ]
+}

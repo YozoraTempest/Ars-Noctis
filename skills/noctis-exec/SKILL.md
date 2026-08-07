@@ -11,6 +11,7 @@ description: 接收 Noctis 已确认的 Task、Unit 或 Work 执行计划，或�
 
 区分物化与执行两个能力：
 
+- `discover-entries` 接收可选 orchestration Artifact，用 `entry --list` 返回状态机实例及其 Task/Unit 入口候选，不推进状态。
 - `materialize-workflow` 接收用户确认的 ExecutionPlan v2，只把完整计划原子写成初始 `pending` 的 `noctis.md`。
 - `execute-workflow` 只接收 ExecutionEntry v2。无论是新计划还是断点恢复，都先由 `entry` 从 `noctis.md` 生成相同的执行输入。
 
@@ -42,7 +43,7 @@ Task、Unit 与 Work 统一使用 `pending | active | blocked | completed`。Wor
 使用 `scripts/exec.py`：
 
 - `workflow materialize`：整体校验并创建已确认 ExecutionPlan 的全部 pending 记录，返回根 orchestration Artifact；
-- `entry`：只读定位项目记录并生成最小 ExecutionEntry。
+- `entry --list`：只读返回 ExecutionEntrySet；选定后用 `entry --record ... --id ...` 生成唯一 ExecutionEntry。
 - `orchestration create/inspect/start/resume/finish/splice/scan`：管理生命周期。
 - `extend insert/upsert/sync/remove/read`：管理稳定 Markdown 扩展。
 

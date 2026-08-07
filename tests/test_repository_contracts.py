@@ -37,6 +37,17 @@ def assert_compatible_ports(
 
 
 class RepositoryContractTests(unittest.TestCase):
+    def test_standalone_document_tools_match_the_canonical_source(self) -> None:
+        source = (REPOSITORY_ROOT / "scripts" / "document_tool.py").read_bytes()
+        for path in (
+            SKILLS_ROOT / "implement" / "scripts" / "implementation.py",
+            SKILLS_ROOT / "code-review" / "scripts" / "review.py",
+            SKILLS_ROOT / "verify" / "scripts" / "scenarios.py",
+            SKILLS_ROOT / "verify" / "scripts" / "verification.py",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(path.read_bytes(), source)
+
     def test_registry_capabilities_match_provider_manifests(self) -> None:
         registry = load_yaml(
             SKILLS_ROOT / "noctis" / "assets" / "registry.example.yaml"
@@ -76,6 +87,12 @@ class RepositoryContractTests(unittest.TestCase):
             self,
             continuation["continue-workflow"]["outputs"]["execution-entry"],
             execution["execute-workflow"]["inputs"]["execution-entry"],
+        )
+        assert_compatible_ports(
+            self,
+            execution["discover-entries"]["outputs"]["candidates"],
+            continuation["continue-workflow"]["inputs"]["candidates"],
+            required_input=False,
         )
         for capability_id in ("materialize-workflow", "execute-workflow"):
             assert_compatible_ports(

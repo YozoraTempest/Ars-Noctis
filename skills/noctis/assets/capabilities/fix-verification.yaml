@@ -1,0 +1,35 @@
+version: 1
+kind: capability
+id: fix-verification
+contract: 1
+summary: 集中修复用户已经授权处理的行为验收失败。
+entry:
+  task_status: active
+  capability: fix-verification
+artifacts:
+  inputs:
+    verification:
+      type: verification-record
+      formats:
+        - ars.verification@1
+      required: true
+  outputs:
+    implementation:
+      type: implementation-record
+      formats:
+        - ars.implementation@1
+      required: true
+outcomes:
+  - completed
+  - deferred
+  - blocked
+allows:
+  - project-write
+  - local-commit
+  - task-record-write
+forbids:
+  - scope-expansion
+  - defensive-enhancement
+  - test-execution
+  - push
+  - deploy

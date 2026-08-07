@@ -13,8 +13,8 @@
 
 常用形状：
 
-- Review finding：Review → Fix → 新 Review → 原后继。
-- Verify failure：Verify → Fix → 可选新 Review → 新 Verify → 原后继。
+- Review finding：Review → `fix-review` → 新 Review → 原后继；Fix 的 required `review` 输入绑定当前 Review 输出。
+- Verify failure：Verify → `fix-verification` → 可选新 Review → 新 Verify → 原后继；Fix 的 required `verification` 输入绑定当前 Verify 输出。
 
 只重接尚未开始的后继。任何后继已 active、completed 或 blocked 时返回 `replan-required`，不要改写已发生历史。
 

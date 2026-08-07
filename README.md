@@ -98,7 +98,7 @@ research -> draft -> review -> to-document
 
 ## 仓库验证
 
-使用统一入口校验所有 Ars manifest、Skill 结构和测试目录。显式传入当前环境官方 `quick_validate.py`，不要依赖固定安装路径：
+使用统一入口校验所有 Ars manifest、Skill 结构、触发评测语料、共享文档工具同步状态和测试目录。显式传入当前环境官方 `quick_validate.py`，不要依赖固定安装路径：
 
 ```powershell
 python scripts/validate_repository.py --quick-validate <path-to-quick_validate.py>
@@ -115,6 +115,6 @@ python scripts/validate_repository.py --quick-validate <path-to-quick_validate.p
 | `noctis` | 规划 Work、Unit、Task、Artifact Binding 并生成 ExecutionPlan | 可用 |
 | `noctis-exec` | 管理执行生命周期、Artifact、状态恢复与文档扩展 | 可用 |
 | `noctis-continue` | 在无上下文时恢复执行入口与 resolved inputs | 可用 |
-| `implement` | 执行 Implement/Fix Task，并维护内部 Step 与提交记录 | 可用 |
+| `implement` | 执行 Implement、fix-review 或 fix-verification Task，并维护内部 Step 与提交记录 | 可用 |
 | `code-review` | 对 Task 精确提交执行静态审查和定向修复复核 | 可用 |
 | `verify` | 按 Unit 场景执行人工、AI 或辅助式行为验收 | 可用 |

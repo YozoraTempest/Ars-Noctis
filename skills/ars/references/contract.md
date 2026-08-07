@@ -46,7 +46,7 @@ capabilities:
       - filesystem-write
 ```
 
-Port ID 只在 capability 内唯一。`type` 表示语义，`formats` 表示可直接消费或产生的原生格式，格式使用 `<namespace>.<name>@<version>`。`required` 表示 Task 完成或启动时是否必须存在。
+Port ID 只在 capability 内唯一。`type` 表示语义，`formats` 表示可直接消费或产生的原生格式，格式使用 `<namespace>.<name>@<version>`。`required` 表示 Task 完成或启动时是否必须存在。端口默认 `cardinality: one`；需要从多个直接依赖汇合相同语义 Artifact 时显式声明 `cardinality: many`，绑定和 resolved input 均使用数组。
 
 `side_effects` 用稳定标识符声明能力可能产生的副作用，供 Noctis 规划时展示；它不能替代用户授权。
 
@@ -70,7 +70,7 @@ Support 不拥有 Task，只在 executor 的生命周期中按声明时机激活
 - `documents`：通过 `documents` 中声明的模板和脚本维护状态，所有写入使用 revision。
 - `external`：状态位于目标工作树或外部工具；恢复时重新检查这些事实，不复制为 Ars 文档。
 
-Document 与 augmentation 字段沿用 Ars-Noctis 的结构化文档契约。`template`、`tool` 和 augmentation template 必须位于 Ars 目录内并真实存在。
+Document 与 augmentation 字段沿用 Ars-Noctis 的结构化文档契约。Document 默认 `scope: task`；Unit 共享文档显式使用 `scope: unit`。`template`、`tool` 和 augmentation template 必须位于 Ars 目录内并真实存在。
 
 ## Artifact Flow
 

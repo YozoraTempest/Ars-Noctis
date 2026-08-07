@@ -30,11 +30,41 @@ def registry_input() -> dict:
         },
         "supports": {},
         "capabilities": {
-            "fix": {
+            "fix-review": {
                 "contract": 1,
                 "executor": "implement",
                 "supports": {},
-                "inputs": {},
+                "inputs": {
+                    "review": {
+                        "type": "review-record",
+                        "formats": ["ars.review@1"],
+                        "required": True,
+                    }
+                },
+                "outputs": {
+                    "implementation": {
+                        "type": "implementation-record",
+                        "formats": ["ars.implementation@1"],
+                        "required": True,
+                    }
+                },
+                "side_effects": [
+                    "project-write",
+                    "local-commit",
+                    "task-record-write",
+                ],
+            },
+            "fix-verification": {
+                "contract": 1,
+                "executor": "implement",
+                "supports": {},
+                "inputs": {
+                    "verification": {
+                        "type": "verification-record",
+                        "formats": ["ars.verification@1"],
+                        "required": True,
+                    }
+                },
                 "outputs": {
                     "implementation": {
                         "type": "implementation-record",
@@ -75,7 +105,19 @@ def registry_input() -> dict:
                         "type": "implementation-record",
                         "formats": ["ars.implementation@1"],
                         "required": False,
-                    }
+                    },
+                    "implementations": {
+                        "type": "implementation-record",
+                        "formats": ["ars.implementation@1"],
+                        "required": False,
+                        "cardinality": "many",
+                    },
+                    "reviews": {
+                        "type": "review-record",
+                        "formats": ["ars.review@1"],
+                        "required": False,
+                        "cardinality": "many",
+                    },
                 },
                 "outputs": {
                     "review": {
@@ -95,7 +137,13 @@ def registry_input() -> dict:
                         "type": "review-record",
                         "formats": ["ars.review@1"],
                         "required": False,
-                    }
+                    },
+                    "reviews": {
+                        "type": "review-record",
+                        "formats": ["ars.review@1"],
+                        "required": False,
+                        "cardinality": "many",
+                    },
                 },
                 "outputs": {
                     "verification": {
@@ -195,7 +243,7 @@ class RegistryTests(unittest.TestCase):
     def test_fix_and_cycles_are_rejected_in_normal_workflows(self) -> None:
         value = registry_input()
         value["workflow_templates"]["reviewed"]["tasks"]["repair"] = {
-            "capability": "fix",
+            "capability": "fix-review",
             "depends_on": ["review"],
             "inputs": {},
         }
@@ -220,6 +268,27 @@ class RegistryTests(unittest.TestCase):
             "foreign.change@1"
         ]
         with self.assertRaisesRegex(self.module.RegistryError, "adapter task"):
+            self.module.validate_registry(value)
+
+    def test_many_input_requires_a_non_empty_direct_dependency_list(self) -> None:
+        value = registry_input()
+        tasks = value["workflow_templates"]["reviewed"]["tasks"]
+        tasks["second-implement"] = {
+            "capability": "implement",
+            "depends_on": [],
+            "inputs": {},
+        }
+        tasks["review"]["depends_on"] = ["implement", "second-implement"]
+        tasks["review"]["inputs"] = {
+            "implementations": [
+                "implement.implementation",
+                "second-implement.implementation",
+            ]
+        }
+        self.module.validate_registry(value)
+
+        tasks["review"]["inputs"]["implementations"] = []
+        with self.assertRaisesRegex(self.module.RegistryError, "non-empty list"):
             self.module.validate_registry(value)
 
 

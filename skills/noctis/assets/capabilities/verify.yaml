@@ -13,6 +13,12 @@ artifacts:
       formats:
         - ars.review@1
       required: false
+    reviews:
+      type: review-record
+      formats:
+        - ars.review@1
+      required: false
+      cardinality: many
   outputs:
     verification:
       type: verification-record

@@ -5,6 +5,21 @@ role: executor
 state:
   mode: documents
 capabilities:
+  - id: discover-entries
+    contract: 1
+    inputs:
+      orchestration:
+        type: orchestration-record
+        formats:
+          - noctis.record@3
+        required: false
+    outputs:
+      candidates:
+        type: execution-entry-set
+        formats:
+          - noctis.execution-entry-set@1
+        required: true
+    side_effects: []
   - id: materialize-workflow
     contract: 1
     inputs:

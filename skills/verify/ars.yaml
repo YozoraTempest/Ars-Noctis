@@ -13,6 +13,12 @@ capabilities:
         formats:
           - ars.review@1
         required: false
+      reviews:
+        type: review-record
+        formats:
+          - ars.review@1
+        required: false
+        cardinality: many
     outputs:
       verification:
         type: verification-record
@@ -27,6 +33,7 @@ supports: []
 documents:
   - id: scenarios
     contract: 1
+    scope: unit
     file: scenarios.md
     template: assets/templates/scenarios.md
     tool: scripts/scenarios.py

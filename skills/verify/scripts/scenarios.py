@@ -250,23 +250,35 @@ def mutate(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=f"Manage {DOCUMENT_ID}.md")
+    parser = argparse.ArgumentParser(
+        description=f"Manage {DOCUMENT_ID}.md with revision-checked writes.",
+        epilog=(
+            "JSON: create accepts {\"sections\": {\"<section>\": \"text\"}}; "
+            "update/append accept {\"content\": \"markdown\"}."
+        ),
+    )
     commands = parser.add_subparsers(dest="action", required=True)
     create_parser = commands.add_parser("create")
-    create_parser.add_argument("--task", type=Path, required=True)
-    create_parser.add_argument("--input")
+    create_parser.add_argument(
+        "--task", type=Path, required=True, help="Task directory or noctis.md path."
+    )
+    create_parser.add_argument(
+        "--input", help="Optional sections JSON file, or '-' for standard input."
+    )
     read_parser = commands.add_parser("read")
     read_parser.add_argument("--task", type=Path, required=True)
-    read_parser.add_argument("--section")
-    read_parser.add_argument("--item")
+    read_parser.add_argument("--section", help="Read one owned slot.")
+    read_parser.add_argument("--item", help="Read one stable collection item.")
     read_parser.add_argument("--format", choices=("json", "markdown"), default="json")
     for name in ("update", "append"):
         command = commands.add_parser(name)
         command.add_argument("--task", type=Path, required=True)
-        command.add_argument("--section", required=True)
-        command.add_argument("--item", required=name == "append")
+        command.add_argument("--section", required=True, help="Owned slot or collection.")
+        command.add_argument("--item", required=name == "append", help="Stable item ID.")
         command.add_argument("--expected-revision", type=int, required=True)
-        command.add_argument("--input", default="-")
+        command.add_argument(
+            "--input", default="-", help="Content JSON file, or '-' for standard input."
+        )
     return parser.parse_args()
 
 

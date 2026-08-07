@@ -9,9 +9,9 @@ description: 基于用户逐项确认的独立场景执行实际行为验收，�
 
 ## 进入 Task
 
-由 Noctis Exec 调度时用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `verify` 时继续；否则返回 deferred，不创建记录、操作环境或迁移状态。存在 `resolvedInputs.review` 时只把它作为审查范围和已知风险来源，不把代码审查结论当作行为证据。独立调用时只执行用户明确要求的验收，不注入 Review 或 Fix。
+由 Noctis Exec 调度时用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `verify` 时继续；否则返回 deferred，不创建记录、操作环境或迁移状态。存在单个 `resolvedInputs.review` 或多来源 `resolvedInputs.reviews` 时，只把完整集合用作审查范围和已知风险来源，不把代码审查结论当作行为证据。独立调用时只执行用户明确要求的验收，不注入 Review 或 Fix。
 
-使用已加载的 scenarios provider 读取 Unit 级 `scenarios.md`。规划 Skill 已生成场景时必须沿用；没有 provider 或文件时，才用 `scripts/scenarios.py` 创建后备场景。不得覆盖既有场景，也不得根据实现细节反向编写容易通过的场景。
+使用 verify manifest 中 `scope: unit` 的 scenarios document，从当前 Unit `noctis.md` 同级读取 `scenarios.md`。规划 Skill 已生成场景时必须沿用；文件不存在时才用 `scripts/scenarios.py --task <unit-record>` 创建后备场景。不得从 Track 路径猜测，不得覆盖既有场景，也不得根据实现细节反向编写容易通过的场景。
 
 ## 确认验收方案
 

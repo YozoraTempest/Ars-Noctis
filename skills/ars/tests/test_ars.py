@@ -144,6 +144,41 @@ class ArsTests(unittest.TestCase):
         with self.assertRaisesRegex(self.module.ArsError, "stateless state"):
             self.module.validate_manifest(value)
 
+    def test_many_ports_and_unit_documents_are_normalized(self) -> None:
+        value = manifest()
+        value["capabilities"][0]["inputs"] = {
+            "sources": {
+                "type": "result",
+                "formats": ["sample.result@1"],
+                "required": True,
+                "cardinality": "many",
+            }
+        }
+        normalized = self.module.validate_manifest(value)
+        self.assertEqual(
+            normalized["capabilities"][0]["inputs"]["sources"]["cardinality"],
+            "many",
+        )
+
+        value = manifest()
+        value["state"] = {"mode": "documents"}
+        value["documents"] = [
+            {
+                "id": "scenarios",
+                "contract": 1,
+                "scope": "unit",
+                "file": "scenarios.md",
+                "template": "assets/scenarios.md",
+                "tool": "scripts/scenarios.py",
+            }
+        ]
+        normalized = self.module.validate_manifest(value)
+        self.assertEqual(normalized["documents"][0]["scope"], "unit")
+
+        value["documents"][0]["scope"] = "work"
+        with self.assertRaisesRegex(self.module.ArsError, "scope"):
+            self.module.validate_manifest(value)
+
 
 if __name__ == "__main__":
     unittest.main()

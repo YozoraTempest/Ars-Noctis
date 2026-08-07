@@ -6,11 +6,11 @@
 - 一个完整需求：Unit，路径为 `Noctis/<domain>/units/<unit-id>/noctis.md`。
 - 多个通常串行的完整需求：Work，路径为 `Noctis/<domain>/work/<work-id>/noctis.md`，子 Unit 位于其 `units/` 下。
 
-不同项目的 Task 通常位于不同 Track，可以并行；局部 Review 依赖对应 Implement，集成 Review/Verify 依赖全部局部分支。正常计划不得包含 Fix。
+不同项目的 Task 通常位于不同 Track，可以并行；局部 Review 依赖对应 Implement，集成 Review/Verify 使用 `cardinality: many` 输入绑定全部直接依赖。正常计划不得包含 `fix-review` 或 `fix-verification`。
 
 ## 选择工作流
 
-当前 Agent 先调用 `noctis-exec entry` 扫描已有根 `noctis.md`。存在多个工作流实例时先展示路径、目标和状态；选定 Unit 后，再展示不同 Track 上的 active、ready、blocked Task 入口。用户选择具体入口后生成唯一 Entry，不重新展开模板或覆盖 Task 快照。
+当前 Agent 先激活 `noctis-continue` 的只读发现流程。Continue 展示已有状态机实例及不同 Track 上的 active、ready、blocked 入口；用户选择遗留入口时由 Continue 进入 Exec，选择创建新计划时才返回这里。不要重新展开模板或覆盖 Task 快照。
 
 创建新计划时再读取 `Noctis/registry.yaml`，用 Workflow Template 展开当前候选。`default_workflow` 只作为推荐，不自动启动；注册表模板不是此前生成的工作流。
 
@@ -20,7 +20,7 @@
 
 读取 `Noctis/registry.yaml`，从 Workflow Template 展开 Task 图。同一 capability 可以出现多次。为每个 Task 固化 contract、executor provider、support provider/激活时机、Artifact Binding 和记录路径；不读取 provider 的 `SKILL.md`。
 
-输入只绑定直接依赖的输出，或绑定用户明确提供的外部 ArtifactRef。类型必须相同且格式必须有交集；否则增加显式 Adapter Task。不要在计划或 Exec 中安排隐藏格式转换。
+输入只绑定直接依赖的输出，或绑定用户明确提供的外部 ArtifactRef。`cardinality: one` 使用单一 source，`many` 使用非空 source 数组。类型必须相同且格式必须有交集；否则增加显式 Adapter Task。不要在计划或 Exec 中安排隐藏格式转换。
 
 没有注册表、provider 不唯一、contract 不兼容或记录路径冲突时展示事实并确认处理，不按路径顺序猜测。
 

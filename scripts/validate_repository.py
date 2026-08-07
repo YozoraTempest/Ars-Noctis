@@ -13,6 +13,8 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPOSITORY_ROOT / "skills"
 ARS_TOOL = SKILLS_ROOT / "ars" / "scripts" / "ars.py"
+DOCUMENT_TOOL_SYNC = REPOSITORY_ROOT / "scripts" / "sync_document_tools.py"
+EVAL_VALIDATOR = REPOSITORY_ROOT / "scripts" / "validate_evals.py"
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,6 +76,8 @@ def main() -> int:
         return 2
 
     try:
+        run([python, str(DOCUMENT_TOOL_SYNC)], env)
+        run([python, str(EVAL_VALIDATOR)], env)
         for skill in native_ars:
             run(
                 [python, str(ARS_TOOL), "validate", "--skill", str(skill)],

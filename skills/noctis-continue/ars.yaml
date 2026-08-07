@@ -8,6 +8,11 @@ capabilities:
   - id: continue-workflow
     contract: 1
     inputs:
+      candidates:
+        type: execution-entry-set
+        formats:
+          - noctis.execution-entry-set@1
+        required: false
       orchestration:
         type: orchestration-record
         formats:

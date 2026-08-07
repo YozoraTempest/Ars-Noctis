@@ -13,6 +13,18 @@ artifacts:
       formats:
         - ars.implementation@1
       required: false
+    implementations:
+      type: implementation-record
+      formats:
+        - ars.implementation@1
+      required: false
+      cardinality: many
+    reviews:
+      type: review-record
+      formats:
+        - ars.review@1
+      required: false
+      cardinality: many
   outputs:
     review:
       type: review-record

@@ -13,7 +13,12 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError as error:
+    raise SystemExit(
+        "ars.py requires PyYAML; install it with 'python -m pip install PyYAML'"
+    ) from error
 
 
 IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -109,7 +114,14 @@ def _ports(value: Any, context: str) -> dict[str, Any]:
     for port_id in sorted(ports):
         _identifier(port_id, f"{context} port id")
         raw = _mapping(ports[port_id], f"{context}.{port_id}")
-        _exact(raw, {"type", "formats", "required"}, f"{context}.{port_id}")
+        unknown = sorted(set(raw) - {"type", "formats", "required", "cardinality"})
+        missing = sorted({"type", "formats", "required"} - set(raw))
+        if missing:
+            raise ArsError(f"{context}.{port_id} is missing: {', '.join(missing)}")
+        if unknown:
+            raise ArsError(
+                f"{context}.{port_id} has unknown fields: {', '.join(unknown)}"
+            )
         formats = sorted(
             _strings(
                 raw["formats"], f"{context}.{port_id}.formats", required=True
@@ -124,11 +136,18 @@ def _ports(value: Any, context: str) -> dict[str, Any]:
         required = raw["required"]
         if not isinstance(required, bool):
             raise ArsError(f"{context}.{port_id}.required must be a boolean")
+        cardinality = raw.get("cardinality", "one")
+        if cardinality not in ("one", "many"):
+            raise ArsError(
+                f"{context}.{port_id}.cardinality must be 'one' or 'many'"
+            )
         normalized[port_id] = {
             "type": _identifier(raw["type"], f"{context}.{port_id}.type"),
             "formats": formats,
             "required": required,
         }
+        if cardinality == "many":
+            normalized[port_id]["cardinality"] = "many"
     return normalized
 
 
@@ -214,24 +233,37 @@ def _documents(
     for index, item in enumerate(value):
         context = f"manifest.documents[{index}]"
         raw = _mapping(item, context)
-        _exact(raw, {"id", "contract", "file", "template", "tool"}, context)
+        unknown = sorted(
+            set(raw) - {"id", "contract", "file", "template", "tool", "scope"}
+        )
+        missing = sorted(
+            {"id", "contract", "file", "template", "tool"} - set(raw)
+        )
+        if missing:
+            raise ArsError(f"{context} is missing: {', '.join(missing)}")
+        if unknown:
+            raise ArsError(f"{context} has unknown fields: {', '.join(unknown)}")
         document_id = _identifier(raw["id"], f"{context}.id")
         if document_id in identifiers:
             raise ArsError(f"manifest.documents repeats '{document_id}'")
         identifiers.add(document_id)
-        normalized.append(
-            {
-                "id": document_id,
-                "contract": _contract(raw["contract"], f"{context}.contract"),
-                "file": _relative(raw["file"], f"{context}.file"),
-                "template": _resource(
-                    root, raw["template"], f"{context}.template", must_exist=must_exist
-                ),
-                "tool": _resource(
-                    root, raw["tool"], f"{context}.tool", must_exist=must_exist
-                ),
-            }
-        )
+        scope = raw.get("scope", "task")
+        if scope not in ("task", "unit"):
+            raise ArsError(f"{context}.scope must be 'task' or 'unit'")
+        document = {
+            "id": document_id,
+            "contract": _contract(raw["contract"], f"{context}.contract"),
+            "file": _relative(raw["file"], f"{context}.file"),
+            "template": _resource(
+                root, raw["template"], f"{context}.template", must_exist=must_exist
+            ),
+            "tool": _resource(
+                root, raw["tool"], f"{context}.tool", must_exist=must_exist
+            ),
+        }
+        if scope == "unit":
+            document["scope"] = "unit"
+        normalized.append(document)
     return sorted(normalized, key=lambda item: item["id"])
 
 

@@ -5,9 +5,32 @@ role: executor
 state:
   mode: documents
 capabilities:
-  - id: fix
+  - id: fix-review
     contract: 1
-    inputs: {}
+    inputs:
+      review:
+        type: review-record
+        formats:
+          - ars.review@1
+        required: true
+    outputs:
+      implementation:
+        type: implementation-record
+        formats:
+          - ars.implementation@1
+        required: true
+    side_effects:
+      - local-commit
+      - project-write
+      - task-record-write
+  - id: fix-verification
+    contract: 1
+    inputs:
+      verification:
+        type: verification-record
+        formats:
+          - ars.verification@1
+        required: true
     outputs:
       implementation:
         type: implementation-record

@@ -1,6 +1,6 @@
 ---
 name: implement
-description: 实现明确的工程任务，或集中修复用户已经接受的审查问题和已授权的验证失败；通过独立脚本维护 implementation.md、执行 Task 内部 Step 并创建边界清晰的本地提交。用于显式实现、修复或 Noctis Exec 中 capability 为 implement/fix 的 active Task；不负责规划、测试、代码审查、行为验证、推送或部署。
+description: 实现明确的工程任务，或集中修复用户已经接受的审查问题和已授权的验证失败；通过独立脚本维护 implementation.md、执行 Task 内部 Step 并创建边界清晰的本地提交。用于显式实现、修复或 Noctis Exec 中 capability 为 implement、fix-review、fix-verification 的 active Task；不负责规划、测试、代码审查、行为验证、推送或部署。
 ---
 
 # Implement
@@ -9,7 +9,7 @@ description: 实现明确的工程任务，或集中修复用户已经接受的�
 
 ## 进入 Task
 
-由 Noctis Exec 调度时，用已加载的 `orchestration inspect --id <task-id>` 读取目标 Task。仅在 `status: active` 且 capability 为 `implement` 或 `fix` 时继续；否则返回 deferred，不修改文件或状态。使用 Task 固化的 Track、binding、record 和 `resolvedInputs`；只读取声明接受的 Artifact，不修改上游原生产物，也不读取项目注册表或其他 Skill 正文。
+由 Noctis Exec 调度时，用已加载的 `orchestration inspect --id <task-id>` 读取目标 Task。仅在 `status: active` 且 capability 为 `implement`、`fix-review` 或 `fix-verification` 时继续；否则返回 deferred，不修改文件或状态。使用 Task 固化的 Track、binding、record 和 `resolvedInputs`；只读取声明接受的 Artifact，不修改上游原生产物，也不读取项目注册表或其他 Skill 正文。
 
 独立调用时只执行用户指定的实现或修复，不增加 Review、Verify 或其他 Task。没有 Noctis 上下文时，不伪造编排状态。
 
@@ -38,12 +38,12 @@ description: 实现明确的工程任务，或集中修复用户已经接受的�
 
 ## Fix Task
 
-只修复已由用户批量接受的 Review finding，或已授权的 Verify failure。通过已加载的 Review/Verification 文档工具读取稳定 ID、证据和最小修复范围，不直接解析 Markdown，也不重新审查问题。
+`fix-review` 只消费 required `resolvedInputs.review`，修复用户批量接受的 finding；`fix-verification` 只消费 required `resolvedInputs.verification`，修复已授权 failure。通过来源文档工具读取稳定 ID、证据和最小修复范围，不直接解析 Markdown，也不重新审查问题。
 
 一次处理当前批准批次；每个受影响仓库使用独立 Fix Task 和 `fix:` 提交，在 Completed 关联 finding/scenario ID。不得扩展修复范围或顺手加固。完成后正常结束 Fix Task；后继复审或重验由 Unit 依赖图调度，不自行计算返回顺序。
 
 ## 恢复与边界
 
-恢复时读取 Unit Task 和 implementation 状态，再核对工作树及登记的 `Noctis-Task` 提交。原工作树有未提交变更时继续当前 Task；存在可达提交但记录缺失时，核实 trailer、范围和产物后补记并推进。记录声称完成但提交不可达或证据冲突时阻塞 Task，不改写历史。切换工作树或机器后，未提交内容无法恢复，应从最后一个可达且已登记的提交检查点重新执行；先通过 fetch、bundle 等方式取得提交，不能把“另一台机器工作树干净”误判为任务完成。
+恢复时读取 Unit Task 和 implementation 状态，再运行 `scripts/reconcile_task.py --repo <repo> --task-id <id> [--recorded-commit <sha>]`。按脚本状态处理：`continue-uncommitted` 原地继续；`repair-record-from-commit` 核实范围和产物后补记；`consistent` 进入下一阶段；`rerun-from-checkpoint` 从最后一个完成检查点重做；`blocked-evidence-conflict` 阻塞且不改写历史。切换工作树或机器前先通过 fetch、bundle 等方式取得提交，不能把“另一台机器工作树干净”误判为任务完成。
 
 未经单独授权，不运行测试、审查、行为验收、推送、部署或外部业务写入。

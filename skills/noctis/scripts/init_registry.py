@@ -104,11 +104,18 @@ def _ports(value: Any, context: str) -> dict[str, Any]:
     for port_id, raw in ports.items():
         _identifier(port_id, f"{context} port id")
         spec = _mapping(raw, f"{context}.{port_id}")
-        _exact_keys(
-            spec,
-            {"type", "formats", "required"},
-            f"{context}.{port_id}",
+        missing = sorted({"type", "formats", "required"} - set(spec))
+        unknown = sorted(
+            set(spec) - {"type", "formats", "required", "cardinality"}
         )
+        if missing:
+            raise RegistryError(
+                f"{context}.{port_id} is missing: {', '.join(missing)}"
+            )
+        if unknown:
+            raise RegistryError(
+                f"{context}.{port_id} has unknown fields: {', '.join(unknown)}"
+            )
         _identifier(spec["type"], f"{context}.{port_id}.type")
         formats = _string_list(
             spec["formats"], f"{context}.{port_id}.formats", required=True
@@ -121,6 +128,10 @@ def _ports(value: Any, context: str) -> dict[str, Any]:
                 )
         if not isinstance(spec["required"], bool):
             raise RegistryError(f"{context}.{port_id}.required must be a boolean")
+        if spec.get("cardinality", "one") not in ("one", "many"):
+            raise RegistryError(
+                f"{context}.{port_id}.cardinality must be 'one' or 'many'"
+            )
     return ports
 
 
@@ -134,6 +145,20 @@ def _source(value: Any, context: str) -> tuple[str, str]:
         _identifier(parts[0], f"{context} task"),
         _identifier(parts[1], f"{context} output"),
     )
+
+
+def _sources(value: Any, context: str, cardinality: str) -> list[tuple[str, str]]:
+    if cardinality == "one":
+        return [_source(value, context)]
+    if not isinstance(value, list) or not value:
+        raise RegistryError(f"{context} must be a non-empty list of Task outputs")
+    result = [
+        _source(source, f"{context}[{index}]")
+        for index, source in enumerate(value)
+    ]
+    if len(result) != len(set(result)):
+        raise RegistryError(f"{context} contains duplicate Task outputs")
+    return result
 
 
 def _validate_dag(items: dict[str, list[str]], context: str) -> None:
@@ -266,7 +291,7 @@ def validate_registry(value: Any) -> dict[str, Any]:
             )
         dependencies: dict[str, list[str]] = {}
         task_capabilities: dict[str, str] = {}
-        task_inputs: dict[str, dict[str, str]] = {}
+        task_inputs: dict[str, dict[str, list[tuple[str, str]]]] = {}
         for task_id, raw_task in tasks.items():
             _identifier(task_id, f"workflow_templates.{workflow_id} task id")
             task = _mapping(
@@ -281,10 +306,10 @@ def validate_registry(value: Any) -> dict[str, Any]:
                 task["capability"],
                 f"workflow_templates.{workflow_id}.tasks.{task_id}.capability",
             )
-            if capability == "fix":
+            if capability in ("fix-review", "fix-verification"):
                 raise RegistryError(
-                    "fix is a recovery capability and cannot appear in a "
-                    "workflow template"
+                    f"{capability} is a recovery capability and cannot appear "
+                    "in a workflow template"
                 )
             if capability not in capabilities:
                 raise RegistryError(
@@ -338,11 +363,12 @@ def validate_registry(value: Any) -> dict[str, Any]:
                 )
             task_inputs[task_id] = {}
             for input_id, source in inputs.items():
-                source_task, source_output = _source(
+                cardinality = capability_inputs[input_id].get("cardinality", "one")
+                task_inputs[task_id][input_id] = _sources(
                     source,
                     f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs.{input_id}",
+                    cardinality,
                 )
-                task_inputs[task_id][input_id] = f"{source_task}.{source_output}"
         for task_id, depends_on in dependencies.items():
             unknown = sorted(set(depends_on) - set(tasks))
             if unknown:
@@ -354,37 +380,38 @@ def validate_registry(value: Any) -> dict[str, Any]:
         for task_id, inputs in task_inputs.items():
             capability = task_capabilities[task_id]
             target_ports = capabilities[capability]["inputs"]
-            for input_id, source in inputs.items():
-                source_task, source_output = source.split(".")
-                if source_task not in tasks:
-                    raise RegistryError(
-                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
-                        f"{input_id} references unknown task '{source_task}'"
-                    )
-                if source_task not in dependencies[task_id]:
-                    raise RegistryError(
-                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
-                        f"{input_id} must reference a direct dependency"
-                    )
-                source_capability = task_capabilities[source_task]
-                source_ports = capabilities[source_capability]["outputs"]
-                if source_output not in source_ports:
-                    raise RegistryError(
-                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
-                        f"{input_id} references unknown output '{source}'"
-                    )
-                target = target_ports[input_id]
-                producer = source_ports[source_output]
-                if target["type"] != producer["type"]:
-                    raise RegistryError(
-                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
-                        f"{input_id} has incompatible artifact types"
-                    )
-                if not set(target["formats"]) & set(producer["formats"]):
-                    raise RegistryError(
-                        f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
-                        f"{input_id} requires an explicit adapter task"
-                    )
+            for input_id, sources in inputs.items():
+                for source_task, source_output in sources:
+                    source = f"{source_task}.{source_output}"
+                    if source_task not in tasks:
+                        raise RegistryError(
+                            f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                            f"{input_id} references unknown task '{source_task}'"
+                        )
+                    if source_task not in dependencies[task_id]:
+                        raise RegistryError(
+                            f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                            f"{input_id} must reference a direct dependency"
+                        )
+                    source_capability = task_capabilities[source_task]
+                    source_ports = capabilities[source_capability]["outputs"]
+                    if source_output not in source_ports:
+                        raise RegistryError(
+                            f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                            f"{input_id} references unknown output '{source}'"
+                        )
+                    target = target_ports[input_id]
+                    producer = source_ports[source_output]
+                    if target["type"] != producer["type"]:
+                        raise RegistryError(
+                            f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                            f"{input_id} has incompatible artifact types"
+                        )
+                    if not set(target["formats"]) & set(producer["formats"]):
+                        raise RegistryError(
+                            f"workflow_templates.{workflow_id}.tasks.{task_id}.inputs."
+                            f"{input_id} requires an explicit adapter task"
+                        )
 
     if default_workflow not in workflows:
         raise RegistryError(
@@ -471,6 +498,8 @@ def render_registry(registry: dict[str, Any]) -> str:
                         + ("true" if port["required"] else "false"),
                     ]
                 )
+                if port.get("cardinality") == "many":
+                    lines.append('        cardinality: "many"')
         side_effects = spec["side_effects"]
         if not side_effects:
             lines.append("    side_effects: []")
@@ -512,9 +541,14 @@ def render_registry(registry: dict[str, Any]) -> str:
             else:
                 lines.append("        inputs:")
                 for input_id in sorted(inputs):
-                    lines.append(
-                        f"          {input_id}: {_quoted(inputs[input_id])}"
-                    )
+                    source = inputs[input_id]
+                    if isinstance(source, list):
+                        lines.append(f"          {input_id}:")
+                        lines.extend(
+                            f"            - {_quoted(item)}" for item in source
+                        )
+                    else:
+                        lines.append(f"          {input_id}: {_quoted(source)}")
     return "\n".join(lines) + "\n"
 
 

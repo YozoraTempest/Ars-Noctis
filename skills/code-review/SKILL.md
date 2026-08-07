@@ -11,7 +11,7 @@ description: 对 Task 登记的精确提交执行静态代码审查，记录可�
 
 由 Noctis Exec 调度时，用 `orchestration inspect --id <task-id>` 读取 Task。仅在 `status: active` 且 capability 为 `review` 时继续；否则返回 deferred。独立调用时按用户给出的提交、差异或范围审查，不注入其他 Task。
 
-优先从当前 Task 的 `resolvedInputs.implementation` 取得 ArtifactRef 和来源 record，并通过来源 provider 已注册的文档工具读取。没有该可选输入的独立或集成审查，再按用户明确范围确定提交。通过已加载的结构化工具读取：
+局部审查优先从 `resolvedInputs.implementation` 取得单个 ArtifactRef。集成审查从 `resolvedInputs.implementations` 或 `resolvedInputs.reviews` 取得多来源数组，逐项通过来源 provider 已注册的文档工具读取；不得丢弃其中任何直接依赖。没有这些可选输入的独立审查，再按用户明确范围确定提交。通过已加载的结构化工具读取：
 
 - Unit `noctis.md` 中当前 Review Task 的依赖、目标和预期结果；
 - 对应 Track 的 `implementation.md` 所登记的精确业务提交；

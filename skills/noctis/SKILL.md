@@ -30,7 +30,7 @@ description: 交互规划编码、数据整理、文档生成等工作的最小 
 
 ## 交付计划
 
-当前 Agent 先调用 `noctis-exec entry` 扫描项目中已有的 pending、active 或 blocked 根 `noctis.md`。有多个状态机实例时先选根记录；一个 Unit 的不同 Track 可以同时暴露多个 Task 入口，再让用户选择具体断点，或从当前请求创建新计划。不要把 Workflow Template 当作已生成工作流。
+当前 Agent 先激活 `noctis-continue` 扫描项目中已有的 pending、active 或 blocked 根 `noctis.md`。Continue 负责实例和具体入口选择；用户选择创建新计划时再返回本流程。不要在 Noctis 中复制扫描规则，也不要把 Workflow Template 当作已生成工作流。
 
 生成 ExecutionPlan v2，明确：
 
