@@ -1,7 +1,4 @@
 interface:
   display_name: "Code Review"
-  short_description: "审查精确提交或多 Track 汇合实现，并对已修复问题执行定向复核"
-  default_prompt: "使用 $code-review 审查用户给定范围或当前 Noctis Task 的精确提交，只返回审查结果。"
-
-policy:
-  allow_implicit_invocation: false
+  short_description: "只读审查精确提交或差异，并报告有证据的正确性、安全和回归问题"
+  default_prompt: "使用 $code-review 审查这个精确变更并报告有证据的问题。"

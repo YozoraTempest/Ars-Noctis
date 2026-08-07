@@ -1,8 +1,0 @@
-version: 1
-kind: support
-id: desktop-control
-contract: 1
-summary: 在当前阶段已有授权范围内控制桌面应用。
-activation:
-  - on-request
-side_effect_authority: false

@@ -1,9 +1,0 @@
-version: 1
-kind: support
-id: task-knowledge
-contract: 1
-summary: 为当前 Task 的 capability 按需提供适用知识，不改变 Task 职责或授权范围。
-activation:
-  - before
-  - on-request
-side_effect_authority: false

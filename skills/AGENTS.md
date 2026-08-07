@@ -1,54 +1,39 @@
 # Skill 编写规范
 
-## 目录边界
+## 安装边界
 
-`skills/` 的每个直接子目录代表一个可独立安装的 Skill，目录名使用小写字母、数字和连字符，并与 `SKILL.md` 中的 `name` 一致。
-
-一个 Skill 的最小结构为：
+每个直接子目录是一个独立 Skill，目录名与 `SKILL.md` 的 `name` 一致。最小结构为：
 
 ```text
-<skill-name>/
+<skill>/
 ├── SKILL.md
-└── agents/
-    └── openai.yaml
+└── agents/openai.yaml
 ```
 
-仅在任务确实需要时增加 `scripts/`、`references/` 或 `assets/`。不要在 Skill 目录中增加 `README.md`、变更日志、安装指南或重复说明。
+只在有实际用途时增加 `scripts/`、`references/`、`assets/` 或 `tests/`。不要增加 Skill 级 README、安装指南、变更日志或重复说明。
 
-Noctis 原生 Ars 在根目录增加 `ars.yaml`。manifest 只声明 executor/support、contract、Artifact port、状态模式、可能副作用、文档工具与扩展资源，不复制 `SKILL.md` 流程。所有资源路径相对于本 Ars，且不得逃逸目录。
+## 触发与正文
 
-## SKILL.md
+- `SKILL.md` frontmatter 只包含 `name` 和 `description`。
+- `description` 同时写明能力、具体适用请求和最邻近的非目标；隐式触发不能依赖正文。
+- 正文使用祈使式，只保留决策、边界和最短完整流程，控制在 500 行内。
+- 详细契约和长例子只保留一个事实来源，并由 `SKILL.md` 直接说明何时读取；引用不继续要求加载第二层引用。
+- `agents/openai.yaml` 使用官方生成脚本维护，default prompt 必须显式包含 `$skill-name`。
 
-- YAML frontmatter 只包含 `name` 和 `description`。
-- `description` 同时说明能力与具体触发场景；不要把触发规则藏在正文中。
-- 正文使用祈使式，聚焦核心决策和执行顺序，控制在 500 行以内。
-- 详细规则和示例只保留一份；移入 `references/` 后，从 `SKILL.md` 直接说明何时读取。
-- 引用层级保持一层，避免引用文件继续要求加载更多引用。
+## Ars 互操作
 
-## UI 元数据与验证
+只有确实需要被组合的 Skill 才增加 `ars.json`。Manifest 使用 `ars.skill/v1`，只声明 Skill ID、SemVer、capability、统一 envelope 版本和可能副作用；不要暴露模板、脚本、状态文件或私有路径。
 
-- 生成 `agents/openai.yaml` 前先阅读官方字段说明，并根据完成后的 `SKILL.md` 生成 `display_name`、`short_description` 和 `default_prompt`。
-- 不添加未经明确提供的图标、品牌色或其他可选元数据。
-- 完成后运行官方 `quick_validate.py`。
-- 脚本必须实际运行；复杂工作流应以真实触发语句验证误触发、漏触发和不必要的流程成本。
+- capability 接收 `ars.task/v1`，返回 `ars.result/v1`。
+- Manifest effect 是可能性，不是授权。Task effect 是本次计划请求；Run grant 才是经用户授权的范围。
+- Provider 不读取其他 Skill 的正文或私有文件，不写 `.ars/runs/`，只返回 Result。
+- Artifact 使用 workspace、git、HTTP(S) URI 或 inline locator；workspace path 必须精确且不可逃逸，commit 必须是可验证的完整 SHA。
+- 同 capability 的多个 provider 必须由 Plan 显式绑定；同 ID 的多个 provider 副本视为歧义，不按路径顺序选择。
 
-## Noctis 注册
+## 状态与恢复
 
-- 仓库不维护中心运行时注册表。每个原生 Ars 用同级 `ars.yaml` 自注册；Noctis 的 capability/support contract 与示例保存在 `noctis/assets/`。
-- `$noctis init` 根据当前可用 Ars manifest 和用户选择，在目标项目生成 `Noctis/registry.yaml`。已有内容不同时必须先展示差异并再次确认，禁止静默覆盖。
-- 同一 capability/support 发现多个 provider 时保留选择，不通过路径顺序暗中决定。没有 manifest 的第三方 Skill 只能由用户提供手工映射。
-- Workflow Template 声明 Task capability 与依赖图，允许多个 Task 使用同一 capability。`fix-review` 和 `fix-verification` 只允许在异常时动态插入，不得加入正常模板。
-- Workflow 的 input port 只绑定直接前置 Task 的 output port；类型相同且格式有交集时直接传递，否则插入显式 Adapter Task。
-- Unit 创建时把每个 Task 的 capability contract、executor、support、provider、Artifact Binding 和记录路径固化到 `noctis.md`；恢复默认沿用快照。
+Noctis 把严格 Plan、Result 和追加事件保存在 Git 跟踪的 `.ars/runs/<run-id>/`；当前 worktree 的 Git 元数据目录中只保存临时 claim 与当前机器授权，可随时重建且不会被提交。Task 完成只有在状态文件和产物提交后才可供后继领取。克隆后没有持久 Result 的旧 `working` Task 恢复为 `pending`；先核对可能已有的外部副作用，再决定是否重试。
 
-## 结构化编排文档
+## 验证
 
-- Task、Unit 与 Work 的 `noctis.md` 由 `noctis-exec/scripts/exec.py` 管理；Noctis 只生成已确认的 ExecutionPlan，Noctis Continue 只生成只读 ExecutionEntry。各原子 Skill 独立携带自己的模板和 `create/read/update/append` 文档脚本。
-- Work 只编排 Unit，Unit 只编排 Task，Task 内 Step 由执行 Skill 管理。Track 仅用于物理分组，不维护生命周期状态。
-- Unit 的 Task 使用依赖图表达并行与串行汇合。异常流程以新的 Task 原子插入，并只重接尚未开始的后继；不得维护全局 stage 或 resume 队列。
-- 文档 frontmatter 保持最小，只放 document、template、revision 及确有必要的任务状态。所有写入使用 revision 比较和原子替换。
-- 可扩展位置使用稳定 `noctis:slot`、`noctis:collection` 和 `noctis:item` 标记。基础工具只更新自己拥有的 slot，并保留未知 extension。
-- augmentation 由 provider manifest 声明，由 Noctis Exec 在对应 Task 实际启用时通过脚本持久插入；不得预改源模板或直接字符串拼接生成任务状态。
-- 只有经 Noctis/Exec 启动的单 Task 才在 `Noctis/<domain>/tasks/<task-id>/` 持久化；独立调用原子 Skill 不注入编排记录。
-- Continue 不区分断点、模型、Agent 或对话来源；它按当前项目局部扫描恢复最小上下文，所有状态判断仍由 Exec 完成。
-- ArtifactRef 只记录类型、格式、位置和 revision；resolved input 另附来源 provider 与 record 句柄，原生文档仍由所属 Ars 独占写入。
+运行官方 `quick_validate.py`、`scripts/ars.py validate` 和代表性脚本用例。测试至少覆盖公开契约、失败状态、revision 冲突、授权边界与恢复；不要用测试固定实现细节或让被测 Skill 自行产生期望答案。

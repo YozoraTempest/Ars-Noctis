@@ -1,0 +1,16 @@
+{
+  "schema": "ars.skill/v1",
+  "id": "code-review",
+  "version": "2.0.0",
+  "capabilities": [
+    {
+      "id": "code.review",
+      "description": "Review an exact code change for actionable correctness, security, and regression risks.",
+      "accepts": "ars.task/v1",
+      "returns": "ars.result/v1",
+      "effects": [
+        "command.execute"
+      ]
+    }
+  ]
+}

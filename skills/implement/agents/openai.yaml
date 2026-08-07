@@ -1,7 +1,4 @@
 interface:
   display_name: "Implement"
-  short_description: "执行实现或证据化修复任务，并维护独立提交、实施记录与断点恢复证据"
-  default_prompt: "使用 $implement 完成当前实现或证据化修复，创建业务提交；有 Noctis Task 时再维护实施记录并返回执行结果。"
-
-policy:
-  allow_implicit_invocation: false
+  short_description: "实现明确范围的仓库代码或配置变更，并运行与风险相称的本地检查"
+  default_prompt: "使用 $implement 完成这个仓库变更并运行相称的本地检查。"

@@ -1,38 +1,26 @@
 ---
 name: ars
-description: 创建、检查和验证 Noctis 原生 Ars Skill，并生成严格的 ars.yaml 能力、Artifact 与状态契约。用于用户显式调用 `$ars create skill`、要求创建可被 Noctis 原生编排的新 Skill，或需要检查、验证 Ars 目录时；改造已有或第三方 Skill 时改用 `to-ars`。
+description: 创建、迁移、检查或验证带 ars.json 能力清单的 Agent Skill。仅在用户要编写 Skill、让现有 Skill 可被 Noctis 发现，或检查 Ars 公共契约时使用；不要用于调用现有 Skill、普通代码实现或工作流编排。
 ---
 
 # Ars
 
-只创建、检查和验证原生 Ars。不要改造已有 Skill，不要编排或执行其业务能力。
+把 Agent Skills 开放目录格式作为安装与触发边界，只为确实需要组合的 Skill 增加 `ars.json`。不要把执行流程、私有文件布局或授权状态复制到 manifest。
 
-## 路由
+## 工作流
 
-- `$ars create skill`：执行创建流程。
-- `$ars inspect <path>`：运行 `scripts/ars.py inspect --skill <path>`，只报告 `native | legacy | external | invalid`。
-- `$ars validate <path>`：先运行 `scripts/ars.py validate --skill <path>`，再运行官方 Skill 快速校验。
+1. 阅读目标仓库规则和目标 Skill 的全部现有内容。用至少两个真实正向请求和两个相邻负向请求确认能力、非目标与触发边界。
+2. 新建 Skill 时使用当前宿主提供的官方初始化工具；修改现有 Skill 时保留其公开行为，除非用户明确允许破坏性重构。
+3. 先完成标准 `SKILL.md`，再仅为可组合能力创建 `ars.json`。每个 capability 只声明稳定 ID、Task/Result envelope 版本和可能副作用。
+4. 运行 `scripts/ars.py validate --skill <目录>`。再运行宿主的官方 Skill 快速校验和至少一个代表性用例。
+5. 更新已有或第三方 Skill 时，先执行 `inspect`。只原地修改用户拥有的目录；对不可修改的第三方 Skill 使用官方初始化工具创建独立 Adapter Skill，不读取或导入其私有实现。
 
-只有需要解释字段、设计 capability 或诊断校验错误时读取 [contract.md](references/contract.md)。不要为普通 inspect 预读契约。
+## 契约边界
 
-## 创建原生 Ars
+- `ars.json` 使用 `ars.skill/v1`，`version` 使用稳定 SemVer。
+- capability 接收 `ars.task/v1` 并返回 `ars.result/v1`；业务产物通过 Artifact 引用传递。
+- `effects` 只表示能力可能需要的副作用，不代表用户授权。不要声明能力不会实际使用的副作用。
+- 不在 manifest 中声明模板、内部状态文件、脚本路径或其他 Skill 的安装路径。
+- 不为只需独立调用、没有组合需求的 Skill 强行增加 Ars manifest。
 
-1. 用具体调用示例确认名称、触发条件、职责、非目标和升级边界。
-2. 确认角色为 executor 或 support，并逐项确认 capability/support contract。
-3. 对 executor 确认 Artifact 输入输出和可能产生的 side effects；没有内容时显式使用空集合。
-4. 选择状态模式：`stateless` 无持久状态，`documents` 使用自有结构化文档，`external` 从目标文件或外部工具恢复。
-5. 使用当前环境官方 `skill-creator` 的初始化工具创建 Skill 骨架，不自行仿造。
-6. 只创建实际需要的 scripts、references、assets 和文档资源。
-7. 把 Ars manifest 规范化为 JSON，先执行 `scripts/ars.py create --dry-run`；确认候选后再写入 `ars.yaml`。已有不同文件时必须展示差异并再次确认后使用 `--replace`。
-8. 依次运行 `scripts/ars.py validate`、官方 Skill 快速校验和新增脚本的代表性用例。
-
-## 原生不变量
-
-- 目录名、`SKILL.md` name 和 `ars.yaml` name 必须一致。
-- Ars 必须既能独立调用，也能按 manifest 由 Noctis 调度。
-- 每份原生文档只由所属 Ars 写入；Artifact 只保存引用，不复制其他 Skill 文档。
-- 格式兼容时直接传递 ArtifactRef；格式不兼容时使用显式 Adapter Task。
-- `side_effects` 只声明可能行为，不授予执行权限。
-- 不为无状态 Ars 创建空文档、空脚本或伪恢复流程。
-
-参数和错误输出以 `python scripts/ars.py --help` 为准，不为调用工具读取脚本源码。
+运行命令与完整字段见 `scripts/ars.py --help`。需要编写或审查 manifest 时读取 [references/manifest.md](references/manifest.md)。

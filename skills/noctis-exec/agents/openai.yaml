@@ -1,7 +1,0 @@
-interface:
-  display_name: "Noctis Exec"
-  short_description: "发现入口、物化计划并推进 Noctis 执行生命周期"
-  default_prompt: "使用 $noctis-exec 发现可恢复入口、物化已确认计划，或根据 ExecutionEntry 推进执行生命周期。"
-
-policy:
-  allow_implicit_invocation: false

@@ -1,4 +1,0 @@
-interface:
-  display_name: "To Ars"
-  short_description: "将现有或第三方 Skill 安全转换为 Noctis 原生 Ars"
-  default_prompt: "使用 $to-ars 将这个现有 Skill 原地迁移或适配为 Noctis 原生 Ars。"

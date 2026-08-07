@@ -1,7 +1,4 @@
 interface:
   display_name: "Noctis"
-  short_description: "规划可恢复的多 Track 工作流、Artifact 汇合与明确授权边界"
-  default_prompt: "使用 $noctis 规划包含多 Track、Artifact 汇合和明确授权边界的可恢复工作流。"
-
-policy:
-  allow_implicit_invocation: false
+  short_description: "规划、执行并从 Git 检查点恢复多 Skill 持久工作流"
+  default_prompt: "使用 $noctis 规划并从 Git 检查点继续这个多 Skill 工作流。"

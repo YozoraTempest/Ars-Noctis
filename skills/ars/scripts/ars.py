@@ -1,402 +1,200 @@
 #!/usr/bin/env python3
-"""Create, inspect, and validate Noctis-native Ars manifests."""
+"""Inspect, create, and validate lightweight Ars capability manifests."""
 
 from __future__ import annotations
 
 import argparse
-import difflib
 import json
 import os
 import re
 import sys
 import tempfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
-SCRIPT_ROOT = Path(__file__).resolve().parent
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
 
-from artifact_contract import ArtifactContractError, normalize_ports
-
-try:
-    import yaml
-except ModuleNotFoundError as error:
-    raise SystemExit(
-        "ars.py requires PyYAML; install it with 'python -m pip install PyYAML'"
-    ) from error
-
-
-IDENTIFIER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-SLOT = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
-ROLES = ("executor", "support")
-STATE_MODES = ("stateless", "documents", "external")
-ACTIVATIONS = ("before", "on-request")
+SKILL_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+CAPABILITY_ID = re.compile(r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$")
+CONTRACT_ID = re.compile(r"^[a-z][a-z0-9.-]*/v[1-9][0-9]*$")
+SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+EFFECTS = {
+    "command.execute",
+    "deployment",
+    "destructive",
+    "git.commit",
+    "git.push",
+    "network.write",
+    "workspace.write",
+}
 
 
 class ArsError(ValueError):
-    """Raised when an Ars directory or manifest violates the native contract."""
+    """Raised when an Ars package violates its public contract."""
 
 
-def _mapping(value: Any, context: str) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ArsError(f"{context} must be an object")
-    if any(not isinstance(key, str) for key in value):
-        raise ArsError(f"{context} keys must be strings")
+def _object(value: Any, context: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        raise ArsError(f"{context} must be an object with string keys")
     return value
 
 
-def _exact(value: dict[str, Any], expected: set[str], context: str) -> None:
-    missing = sorted(expected - set(value))
-    unknown = sorted(set(value) - expected)
+def _exact(value: dict[str, Any], fields: set[str], context: str) -> None:
+    missing = sorted(fields - set(value))
+    unknown = sorted(set(value) - fields)
     if missing:
         raise ArsError(f"{context} is missing: {', '.join(missing)}")
     if unknown:
         raise ArsError(f"{context} has unknown fields: {', '.join(unknown)}")
 
 
-def _identifier(value: Any, context: str) -> str:
-    if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
-        raise ArsError(f"{context} must be a lowercase hyphenated identifier")
-    return value
+def _text(value: Any, context: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ArsError(f"{context} must be a non-empty string")
+    return value.strip()
 
 
-def _contract(value: Any, context: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ArsError(f"{context} must be a positive integer")
-    return value
-
-
-def _strings(
-    value: Any, context: str, *, required: bool = False
-) -> list[str]:
-    if not isinstance(value, list):
-        raise ArsError(f"{context} must be a list")
-    result: list[str] = []
-    for item in value:
-        if not isinstance(item, str) or not item.strip():
-            raise ArsError(f"{context} items must be non-empty strings")
-        result.append(item.strip())
-    if required and not result:
-        raise ArsError(f"{context} must not be empty")
-    if len(result) != len(set(result)):
-        raise ArsError(f"{context} contains duplicates")
+def _identifier(value: Any, pattern: re.Pattern[str], context: str) -> str:
+    result = _text(value, context)
+    if not pattern.fullmatch(result):
+        raise ArsError(f"{context} has an invalid identifier: {result}")
     return result
 
 
-def _relative(value: Any, context: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise ArsError(f"{context} must be a non-empty relative POSIX path")
-    value = value.strip()
-    if "\\" in value or ":" in value:
-        raise ArsError(f"{context} must be a relative POSIX path")
-    path = PurePosixPath(value)
-    if path.is_absolute() or "." in path.parts or ".." in path.parts:
-        raise ArsError(f"{context} must stay inside the Ars directory")
-    return path.as_posix()
+def validate_manifest(value: Any) -> dict[str, Any]:
+    manifest = _object(value, "manifest")
+    _exact(manifest, {"schema", "id", "version", "capabilities"}, "manifest")
+    if manifest["schema"] != "ars.skill/v1":
+        raise ArsError("manifest.schema must be 'ars.skill/v1'")
+    skill_id = _identifier(manifest["id"], SKILL_ID, "manifest.id")
+    version = _text(manifest["version"], "manifest.version")
+    if not SEMVER.fullmatch(version):
+        raise ArsError("manifest.version must be a stable MAJOR.MINOR.PATCH version")
 
-
-def _resource(
-    root: Path | None, value: Any, context: str, *, must_exist: bool
-) -> str:
-    relative = _relative(value, context)
-    if root is not None and must_exist:
-        candidate = root.joinpath(*PurePosixPath(relative).parts).resolve()
-        try:
-            candidate.relative_to(root.resolve())
-        except ValueError as error:
-            raise ArsError(f"{context} escapes the Ars directory") from error
-        if not candidate.is_file():
-            raise ArsError(f"{context} does not exist: {relative}")
-    return relative
-
-
-def _ports(value: Any, context: str) -> dict[str, Any]:
-    try:
-        return normalize_ports(value, context)
-    except ArtifactContractError as error:
-        raise ArsError(str(error)) from error
-
-
-def _capabilities(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        raise ArsError("manifest.capabilities must be a list")
-    normalized: list[dict[str, Any]] = []
-    identifiers: set[str] = set()
-    for index, item in enumerate(value):
+    raw_capabilities = manifest["capabilities"]
+    if not isinstance(raw_capabilities, list) or not raw_capabilities:
+        raise ArsError("manifest.capabilities must be a non-empty list")
+    capabilities: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw_capabilities):
         context = f"manifest.capabilities[{index}]"
-        raw = _mapping(item, context)
+        capability = _object(item, context)
         _exact(
-            raw,
-            {"id", "contract", "inputs", "outputs", "side_effects"},
+            capability,
+            {"id", "description", "accepts", "returns", "effects"},
             context,
         )
-        capability_id = _identifier(raw["id"], f"{context}.id")
-        if capability_id in identifiers:
-            raise ArsError(f"manifest.capabilities repeats '{capability_id}'")
-        identifiers.add(capability_id)
-        effects = sorted(_strings(raw["side_effects"], f"{context}.side_effects"))
-        for effect in effects:
-            _identifier(effect, f"{context}.side_effects item")
-        normalized.append(
+        capability_id = _identifier(capability["id"], CAPABILITY_ID, f"{context}.id")
+        if capability_id in seen:
+            raise ArsError(f"manifest repeats capability '{capability_id}'")
+        seen.add(capability_id)
+        accepts = _identifier(capability["accepts"], CONTRACT_ID, f"{context}.accepts")
+        returns = _identifier(capability["returns"], CONTRACT_ID, f"{context}.returns")
+        if accepts != "ars.task/v1" or returns != "ars.result/v1":
+            raise ArsError(
+                f"{context} must accept ars.task/v1 and return ars.result/v1"
+            )
+        raw_effects = capability["effects"]
+        if not isinstance(raw_effects, list) or any(
+            not isinstance(effect, str) for effect in raw_effects
+        ):
+            raise ArsError(f"{context}.effects must be a list of strings")
+        effects = sorted(set(raw_effects))
+        unknown_effects = sorted(set(effects) - EFFECTS)
+        if unknown_effects:
+            raise ArsError(
+                f"{context}.effects contains unknown values: {', '.join(unknown_effects)}"
+            )
+        if len(effects) != len(raw_effects):
+            raise ArsError(f"{context}.effects contains duplicates")
+        capabilities.append(
             {
                 "id": capability_id,
-                "contract": _contract(raw["contract"], f"{context}.contract"),
-                "inputs": _ports(raw["inputs"], f"{context}.inputs"),
-                "outputs": _ports(raw["outputs"], f"{context}.outputs"),
-                "side_effects": effects,
+                "description": _text(capability["description"], f"{context}.description"),
+                "accepts": accepts,
+                "returns": returns,
+                "effects": effects,
             }
         )
-    return sorted(normalized, key=lambda item: item["id"])
-
-
-def _supports(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        raise ArsError("manifest.supports must be a list")
-    normalized: list[dict[str, Any]] = []
-    identifiers: set[str] = set()
-    for index, item in enumerate(value):
-        context = f"manifest.supports[{index}]"
-        raw = _mapping(item, context)
-        _exact(
-            raw,
-            {"id", "contract", "activation", "side_effects"},
-            context,
-        )
-        support_id = _identifier(raw["id"], f"{context}.id")
-        if support_id in identifiers:
-            raise ArsError(f"manifest.supports repeats '{support_id}'")
-        identifiers.add(support_id)
-        activation = _strings(
-            raw["activation"], f"{context}.activation", required=True
-        )
-        invalid = sorted(set(activation) - set(ACTIVATIONS))
-        if invalid:
-            raise ArsError(
-                f"{context}.activation contains invalid values: "
-                + ", ".join(invalid)
-            )
-        effects = sorted(_strings(raw["side_effects"], f"{context}.side_effects"))
-        for effect in effects:
-            _identifier(effect, f"{context}.side_effects item")
-        normalized.append(
-            {
-                "id": support_id,
-                "contract": _contract(raw["contract"], f"{context}.contract"),
-                "activation": [item for item in ACTIVATIONS if item in activation],
-                "side_effects": effects,
-            }
-        )
-    return sorted(normalized, key=lambda item: item["id"])
-
-
-def _documents(
-    value: Any, root: Path | None, *, must_exist: bool
-) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        raise ArsError("manifest.documents must be a list")
-    normalized: list[dict[str, Any]] = []
-    identifiers: set[str] = set()
-    for index, item in enumerate(value):
-        context = f"manifest.documents[{index}]"
-        raw = _mapping(item, context)
-        unknown = sorted(
-            set(raw) - {"id", "contract", "file", "template", "tool", "scope"}
-        )
-        missing = sorted(
-            {"id", "contract", "file", "template", "tool"} - set(raw)
-        )
-        if missing:
-            raise ArsError(f"{context} is missing: {', '.join(missing)}")
-        if unknown:
-            raise ArsError(f"{context} has unknown fields: {', '.join(unknown)}")
-        document_id = _identifier(raw["id"], f"{context}.id")
-        if document_id in identifiers:
-            raise ArsError(f"manifest.documents repeats '{document_id}'")
-        identifiers.add(document_id)
-        scope = raw.get("scope", "task")
-        if scope not in ("task", "unit"):
-            raise ArsError(f"{context}.scope must be 'task' or 'unit'")
-        document = {
-            "id": document_id,
-            "contract": _contract(raw["contract"], f"{context}.contract"),
-            "file": _relative(raw["file"], f"{context}.file"),
-            "template": _resource(
-                root, raw["template"], f"{context}.template", must_exist=must_exist
-            ),
-            "tool": _resource(
-                root, raw["tool"], f"{context}.tool", must_exist=must_exist
-            ),
-        }
-        if scope == "unit":
-            document["scope"] = "unit"
-        normalized.append(document)
-    return sorted(normalized, key=lambda item: item["id"])
-
-
-def _augmentations(
-    value: Any,
-    root: Path | None,
-    documents: set[str],
-    *,
-    must_exist: bool,
-) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        raise ArsError("manifest.augmentations must be a list")
-    normalized: list[dict[str, Any]] = []
-    identifiers: set[str] = set()
-    for index, item in enumerate(value):
-        context = f"manifest.augmentations[{index}]"
-        raw = _mapping(item, context)
-        _exact(raw, {"id", "target", "slot", "scope", "template"}, context)
-        augmentation_id = _identifier(raw["id"], f"{context}.id")
-        if augmentation_id in identifiers:
-            raise ArsError(f"manifest.augmentations repeats '{augmentation_id}'")
-        identifiers.add(augmentation_id)
-        target = _identifier(raw["target"], f"{context}.target")
-        if target not in documents:
-            raise ArsError(f"{context}.target references unknown document '{target}'")
-        scope = raw["scope"]
-        if scope not in ("once", "each"):
-            raise ArsError(f"{context}.scope must be 'once' or 'each'")
-        slot = raw["slot"]
-        if not isinstance(slot, str) or not SLOT.fullmatch(slot):
-            raise ArsError(f"{context}.slot must be a stable dotted identifier")
-        normalized.append(
-            {
-                "id": augmentation_id,
-                "target": target,
-                "slot": slot,
-                "scope": scope,
-                "template": _resource(
-                    root, raw["template"], f"{context}.template", must_exist=must_exist
-                ),
-            }
-        )
-    return sorted(normalized, key=lambda item: item["id"])
-
-
-def validate_manifest(
-    value: Any,
-    *,
-    root: Path | None = None,
-    must_exist: bool = False,
-) -> dict[str, Any]:
-    manifest = _mapping(value, "manifest")
-    _exact(
-        manifest,
-        {
-            "version",
-            "kind",
-            "name",
-            "role",
-            "state",
-            "capabilities",
-            "supports",
-            "documents",
-            "augmentations",
-        },
-        "manifest",
-    )
-    if isinstance(manifest["version"], bool) or manifest["version"] != 1:
-        raise ArsError("manifest.version must be 1")
-    if manifest["kind"] != "ars":
-        raise ArsError("manifest.kind must be 'ars'")
-    name = _identifier(manifest["name"], "manifest.name")
-    role = manifest["role"]
-    if role not in ROLES:
-        raise ArsError("manifest.role must be 'executor' or 'support'")
-    state = _mapping(manifest["state"], "manifest.state")
-    _exact(state, {"mode"}, "manifest.state")
-    mode = state["mode"]
-    if mode not in STATE_MODES:
-        raise ArsError(
-            "manifest.state.mode must be stateless, documents, or external"
-        )
-
-    capabilities = _capabilities(manifest["capabilities"])
-    supports = _supports(manifest["supports"])
-    documents = _documents(manifest["documents"], root, must_exist=must_exist)
-    document_ids = {item["id"] for item in documents}
-    augmentations = _augmentations(
-        manifest["augmentations"],
-        root,
-        document_ids,
-        must_exist=must_exist,
-    )
-    if role == "executor" and (not capabilities or supports):
-        raise ArsError("executor Ars requires capabilities and forbids supports")
-    if role == "support" and (not supports or capabilities):
-        raise ArsError("support Ars requires supports and forbids capabilities")
-    if mode == "documents" and not documents:
-        raise ArsError("documents state requires at least one document")
-    if mode != "documents" and (documents or augmentations):
-        raise ArsError(f"{mode} state cannot declare documents or augmentations")
-
     return {
-        "version": 1,
-        "kind": "ars",
-        "name": name,
-        "role": role,
-        "state": {"mode": mode},
-        "capabilities": capabilities,
-        "supports": supports,
-        "documents": documents,
-        "augmentations": augmentations,
+        "schema": "ars.skill/v1",
+        "id": skill_id,
+        "version": version,
+        "capabilities": sorted(capabilities, key=lambda item: item["id"]),
     }
 
 
-def _skill_metadata(root: Path) -> dict[str, Any]:
-    skill_file = root / "SKILL.md"
-    if not skill_file.is_file():
-        raise ArsError(f"Skill is missing SKILL.md: {root}")
+def load_manifest(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as error:
+        raise ArsError(f"invalid JSON in {path}: {error}") from error
+    return validate_manifest(value)
+
+
+def _frontmatter(skill_file: Path) -> dict[str, str]:
     text = skill_file.read_text(encoding="utf-8-sig")
-    if not text.startswith("---\n"):
+    lines = text.splitlines()
+    if not lines or lines[0] != "---":
         raise ArsError("SKILL.md is missing YAML frontmatter")
-    marker = text.find("\n---", 4)
-    if marker < 0:
-        raise ArsError("SKILL.md frontmatter is not terminated")
-    metadata = _mapping(yaml.safe_load(text[4:marker]) or {}, "SKILL.md frontmatter")
-    _exact(metadata, {"name", "description"}, "SKILL.md frontmatter")
-    _identifier(metadata["name"], "SKILL.md name")
-    if not isinstance(metadata["description"], str) or not metadata["description"].strip():
-        raise ArsError("SKILL.md description must not be empty")
-    return metadata
+    try:
+        end = lines.index("---", 1)
+    except ValueError as error:
+        raise ArsError("SKILL.md frontmatter is not terminated") from error
+    metadata: dict[str, str] = {}
+    for line in lines[1:end]:
+        if line.startswith((" ", "\t")) or not line.strip():
+            continue
+        key, separator, raw = line.partition(":")
+        if not separator or not key or key != key.strip():
+            continue
+        value = raw.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        metadata[key] = value
+    if not metadata.get("name"):
+        raise ArsError("SKILL.md frontmatter must contain a scalar name")
+    if "description" not in metadata:
+        raise ArsError("SKILL.md frontmatter must contain description")
+    return {"name": metadata["name"], "description": metadata["description"]}
 
 
 def validate_skill(root: Path) -> dict[str, Any]:
     root = root.resolve()
     if not root.is_dir():
         raise ArsError(f"Skill directory does not exist: {root}")
-    metadata = _skill_metadata(root)
-    manifest_path = root / "ars.yaml"
-    if not manifest_path.is_file():
-        raise ArsError(f"Skill is missing ars.yaml: {root}")
-    manifest = validate_manifest(
-        yaml.safe_load(manifest_path.read_text(encoding="utf-8-sig")),
-        root=root,
-        must_exist=True,
-    )
-    if metadata["name"] != root.name or manifest["name"] != root.name:
-        raise ArsError("directory, SKILL.md name, and manifest.name must match")
+    skill_file = root / "SKILL.md"
+    manifest_file = root / "ars.json"
+    if not skill_file.is_file():
+        raise ArsError(f"Skill is missing SKILL.md: {root}")
+    if not manifest_file.is_file():
+        raise ArsError(f"Skill is missing ars.json: {root}")
+    metadata = _frontmatter(skill_file)
+    manifest = load_manifest(manifest_file)
+    if metadata["name"] != root.name or manifest["id"] != root.name:
+        raise ArsError("directory, SKILL.md name, and manifest.id must match")
     return manifest
 
 
-def render_manifest(value: Any, *, root: Path | None = None) -> str:
-    manifest = validate_manifest(value, root=root, must_exist=root is not None)
-    return yaml.safe_dump(
-        manifest,
-        allow_unicode=True,
-        sort_keys=False,
-        default_flow_style=False,
-    )
-
-
-def _load_json(source: str) -> Any:
-    if source == "-":
-        return json.load(sys.stdin)
-    with Path(source).open(encoding="utf-8-sig") as stream:
-        return json.load(stream)
+def inspect_skill(root: Path) -> dict[str, Any]:
+    root = root.resolve()
+    if not root.is_dir():
+        raise ArsError(f"Skill directory does not exist: {root}")
+    if not (root / "SKILL.md").is_file():
+        raise ArsError(f"directory is not an Agent Skill: {root}")
+    metadata = _frontmatter(root / "SKILL.md")
+    if metadata["name"] != root.name:
+        raise ArsError("directory and SKILL.md name must match")
+    if not (root / "ars.json").is_file():
+        return {"ok": True, "status": "standard", "path": str(root)}
+    manifest = validate_skill(root)
+    return {
+        "ok": True,
+        "status": "native",
+        "path": str(root),
+        "id": manifest["id"],
+        "version": manifest["version"],
+        "capabilities": [item["id"] for item in manifest["capabilities"]],
+    }
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -418,48 +216,15 @@ def _atomic_write(path: Path, content: str) -> None:
         raise
 
 
-def inspect_skill(root: Path) -> dict[str, Any]:
-    root = root.resolve()
-    if not root.is_dir():
-        raise ArsError(f"Skill directory does not exist: {root}")
-    if (root / "ars.yaml").is_file():
-        try:
-            manifest = validate_skill(root)
-        except (ArsError, OSError, yaml.YAMLError) as error:
-            return {"ok": False, "status": "invalid", "path": str(root), "error": str(error)}
-        identifiers = (
-            [item["id"] for item in manifest["capabilities"]]
-            if manifest["role"] == "executor"
-            else [item["id"] for item in manifest["supports"]]
-        )
-        return {
-            "ok": True,
-            "status": "native",
-            "path": str(root),
-            "name": manifest["name"],
-            "role": manifest["role"],
-            "state": manifest["state"]["mode"],
-            "provides": identifiers,
-        }
-    status = "legacy" if (root / "noctis.yaml").is_file() else "external"
-    return {"ok": True, "status": status, "path": str(root)}
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Create, inspect, and validate Noctis-native Ars Skills."
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
-
-    inspect = actions.add_parser("inspect")
-    inspect.add_argument("--skill", type=Path, required=True)
-
-    validate = actions.add_parser("validate")
-    validate.add_argument("--skill", type=Path, required=True)
-
+    for action in ("inspect", "validate"):
+        command = actions.add_parser(action)
+        command.add_argument("--skill", type=Path, required=True)
     create = actions.add_parser("create")
     create.add_argument("--skill", type=Path, required=True)
-    create.add_argument("--input", required=True)
+    create.add_argument("--input", type=Path, required=True)
     create.add_argument("--replace", action="store_true")
     create.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -470,71 +235,43 @@ def main() -> int:
     try:
         if args.action == "inspect":
             result = inspect_skill(args.skill)
-            print(json.dumps(result, ensure_ascii=False))
-            return 0 if result["ok"] else 1
-        if args.action == "validate":
+        elif args.action == "validate":
             manifest = validate_skill(args.skill)
-            print(
-                json.dumps(
-                    {
-                        "ok": True,
-                        "status": "valid",
-                        "path": str(args.skill.resolve()),
-                        "name": manifest["name"],
-                    },
-                    ensure_ascii=False,
-                )
-            )
-            return 0
-
-        root = args.skill.resolve()
-        if not root.is_dir():
-            raise ArsError(f"Skill directory does not exist: {root}")
-        _skill_metadata(root)
-        candidate = render_manifest(_load_json(args.input), root=root)
-        target = root / "ars.yaml"
-        if args.dry_run:
-            sys.stdout.write(candidate)
-            return 0
-        if target.exists():
-            current = target.read_text(encoding="utf-8-sig")
-            if current == candidate:
-                status = "unchanged"
-            elif not args.replace:
-                diff = "".join(
-                    difflib.unified_diff(
-                        current.splitlines(keepends=True),
-                        candidate.splitlines(keepends=True),
-                        fromfile=str(target),
-                        tofile="candidate",
-                    )
-                )
-                print(
-                    json.dumps(
-                        {"ok": False, "status": "different", "path": str(target)},
-                        ensure_ascii=False,
-                    )
-                )
-                sys.stdout.write(diff)
-                return 2
-            else:
-                _atomic_write(target, candidate)
-                status = "replaced"
+            result = {
+                "ok": True,
+                "status": "valid",
+                "path": str(args.skill.resolve()),
+                "id": manifest["id"],
+                "version": manifest["version"],
+            }
         else:
-            _atomic_write(target, candidate)
-            status = "created"
-        print(
-            json.dumps(
-                {"ok": True, "status": status, "path": str(target)},
-                ensure_ascii=False,
-            )
-        )
+            root = args.skill.resolve()
+            if not root.is_dir():
+                raise ArsError(f"Skill directory does not exist: {root}")
+            metadata = _frontmatter(root / "SKILL.md")
+            manifest = load_manifest(args.input)
+            if metadata["name"] != root.name or manifest["id"] != root.name:
+                raise ArsError("directory, SKILL.md name, and manifest.id must match")
+            content = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+            target = root / "ars.json"
+            if args.dry_run:
+                sys.stdout.write(content)
+                return 0
+            if target.exists() and target.read_text(encoding="utf-8-sig") != content:
+                if not args.replace:
+                    raise ArsError(f"{target} exists with different content; use --replace")
+                status = "replaced"
+            elif target.exists():
+                status = "unchanged"
+            else:
+                status = "created"
+            if status != "unchanged":
+                _atomic_write(target, content)
+            result = {"ok": True, "status": status, "path": str(target)}
+        print(json.dumps(result, ensure_ascii=False))
         return 0
-    except (ArsError, OSError, json.JSONDecodeError, yaml.YAMLError) as error:
-        print(
-            json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False),
-            file=sys.stderr,
-        )
+    except (ArsError, OSError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False), file=sys.stderr)
         return 1
 
 

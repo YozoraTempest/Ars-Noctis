@@ -1,7 +1,4 @@
 interface:
   display_name: "Verify"
-  short_description: "按确认场景执行人工、AI 或辅助式行为验收并记录证据"
-  default_prompt: "使用 $verify 按用户确认的场景执行行为验收；有 Noctis Unit 时沿用共享场景与风险输入。"
-
-policy:
-  allow_implicit_invocation: false
+  short_description: "执行可观察的行为验收或集成场景，并返回带实际证据的明确判定"
+  default_prompt: "使用 $verify 按这些场景执行行为验收并记录证据。"

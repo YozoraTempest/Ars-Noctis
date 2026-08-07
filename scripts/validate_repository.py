@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run repository-wide Ars, Skill, and unittest validation."""
+"""Run repository-wide Skill, Ars, runtime, trigger, and unittest validation."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ import sys
 from pathlib import Path
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-SKILLS_ROOT = REPOSITORY_ROOT / "skills"
-ARS_TOOL = SKILLS_ROOT / "ars" / "scripts" / "ars.py"
-DOCUMENT_TOOL_SYNC = REPOSITORY_ROOT / "scripts" / "sync_document_tools.py"
-ARTIFACT_CONTRACT_SYNC = REPOSITORY_ROOT / "scripts" / "sync_artifact_contracts.py"
-EVAL_VALIDATOR = REPOSITORY_ROOT / "scripts" / "validate_evals.py"
+ROOT = Path(__file__).resolve().parents[1]
+SKILLS = ROOT / "skills"
+ARS = SKILLS / "ars" / "scripts" / "ars.py"
+NOCTIS = SKILLS / "noctis" / "scripts" / "noctis.py"
+EXAMPLE_PLAN = SKILLS / "noctis" / "assets" / "plan.example.json"
+EVALS = ROOT / "scripts" / "validate_evals.py"
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,7 +33,7 @@ def run(command: list[str], env: dict[str, str]) -> None:
     print("[RUN] " + " ".join(command), flush=True)
     result = subprocess.run(
         command,
-        cwd=REPOSITORY_ROOT,
+        cwd=ROOT,
         env=env,
         check=False,
         stderr=subprocess.STDOUT,
@@ -45,16 +45,11 @@ def run(command: list[str], env: dict[str, str]) -> None:
 
 
 def test_directories() -> list[Path]:
-    directories = []
-    repository_tests = REPOSITORY_ROOT / "tests"
-    if any(repository_tests.glob("test_*.py")):
-        directories.append(repository_tests)
-    directories.extend(
-        path
-        for path in sorted(SKILLS_ROOT.glob("*/tests"))
-        if any(path.glob("test_*.py"))
-    )
-    return directories
+    result = []
+    for directory in [ROOT / "tests", *sorted(SKILLS.glob("*/tests"))]:
+        if directory.is_dir() and any(directory.glob("test_*.py")):
+            result.append(directory)
+    return result
 
 
 def main() -> int:
@@ -68,25 +63,34 @@ def main() -> int:
     env["PYTHONUTF8"] = "1"
     python = sys.executable
     skill_directories = sorted(
-        path for path in SKILLS_ROOT.iterdir() if (path / "SKILL.md").is_file()
+        path for path in SKILLS.iterdir() if (path / "SKILL.md").is_file()
     )
-    native_ars = [path for path in skill_directories if (path / "ars.yaml").is_file()]
+    native = [path for path in skill_directories if (path / "ars.json").is_file()]
     suites = test_directories()
     if not suites:
         print("no unittest directories were discovered", file=sys.stderr)
         return 2
 
     try:
-        run([python, str(DOCUMENT_TOOL_SYNC)], env)
-        run([python, str(ARTIFACT_CONTRACT_SYNC)], env)
-        run([python, str(EVAL_VALIDATOR)], env)
-        for skill in native_ars:
-            run(
-                [python, str(ARS_TOOL), "validate", "--skill", str(skill)],
-                env,
-            )
+        run([python, str(EVALS)], env)
+        for skill in native:
+            run([python, str(ARS), "validate", "--skill", str(skill)], env)
         for skill in skill_directories:
             run([python, str(quick_validate), str(skill)], env)
+        run(
+            [
+                python,
+                str(NOCTIS),
+                "plan-check",
+                "--project",
+                str(ROOT),
+                "--plan",
+                str(EXAMPLE_PLAN),
+                "--skills-root",
+                str(SKILLS),
+            ],
+            env,
+        )
         for suite in suites:
             run(
                 [
@@ -107,7 +111,7 @@ def main() -> int:
         return 1
 
     print(
-        f"Validation passed: {len(native_ars)} Ars manifests, "
+        f"Validation passed: {len(native)} Ars manifests, "
         f"{len(skill_directories)} Skills, {len(suites)} unittest suites."
     )
     return 0

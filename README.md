@@ -1,126 +1,92 @@
 # Ars-Noctis
 
-Ars-Noctis 是轻量级 Skills 编排与互操作框架。Ars 定义可独立调用的原生 Skill 单元和 Artifact 契约；Noctis 负责组合 Ars、推进执行状态并在上下文丢失后恢复。
+Ars-Noctis 是面向 Agent Skills 的轻量级组合协议。Ars 为标准 Skill 增加一个很小的能力清单；Noctis 在确有需要时把多个能力组成可恢复的 Task DAG。单个 Skill 始终可以独立触发，不需要安装或运行 Noctis。
 
-单个 Ars 足够时直接调用，不要求进入 Noctis。只有多 Ars 协作、跨项目执行或需要断点恢复时才创建编排记录。
+## 架构
 
-## 仓库结构
-
-```text
-Ars-Noctis/
-├── AGENTS.md              # 仓库级协作约束
-└── skills/
-    ├── AGENTS.md          # Skill 编写与验证规范
-    └── <skill-name>/
-        ├── SKILL.md       # 必需：触发描述与核心流程
-        ├── ars.yaml       # 原生 Ars：能力、Artifact、状态和资源契约
-        ├── agents/
-        │   └── openai.yaml
-        ├── references/    # 可选：按需加载的详细资料
-        ├── scripts/       # 可选：确定性读写和重复操作
-        └── assets/        # 可选：文档模板、扩展和其他资源
+```mermaid
+flowchart LR
+    U["用户请求"] --> D{"单个 Skill 足够?"}
+    D -->|是| S["直接加载 SKILL.md"]
+    D -->|否| C["扫描 ars.json 能力清单"]
+    C --> P["校验 ars.plan/v1"]
+    P --> G["Git 中的 Plan、Result 与追加 Event"]
+    G --> T["领取 ars.task/v1"]
+    T --> H["宿主加载绑定的 provider Skill"]
+    H --> R["返回 ars.result/v1"]
+    R --> G
+    G --> A["提交检查点后 Artifact 传给直接后继"]
 ```
 
-每个 `skills/<skill-name>` 都应当可以单独触发。Ars 只包含执行任务所需的内容；仓库说明、设计过程和维护约定保留在仓库根目录。
+系统只有三层：
 
-## Ars
+1. **Skill 包层**：遵循 [Agent Skills 规范](https://agentskills.io/specification) 的 `SKILL.md`、可选脚本、引用和资产，负责安装、触发与独立执行。
+2. **能力契约层**：可选 `ars.json` 声明 capability、统一 Task/Result envelope 和可能副作用。Noctis 只扫描 manifest，不读取其他 Skill 正文，也不把控制面自身注册成可递归调度的 provider。
+3. **状态层**：Noctis 把 Run、Plan、Result 和追加事件保存到 Git 跟踪的 `.ars/runs/<run-id>/`。当前 worktree 的 Git 元数据目录只保存本机 claim 与当前机器授权，可以删除重建且不会进入提交。宿主仍负责真正加载 Skill 与使用工具。
 
-原生 Ars 使用 `ars.yaml` 声明：
+## 为什么这样选
 
-- executor capability 或 support；
-- input/output Artifact port 与原生格式；
-- 可能产生的 side effects，但不借此授予权限；
-- `stateless | documents | external` 状态模式；
-- 自有文档、工具和 augmentation。
+| 社区方案 | 采用的稳定概念 | 没有引入的部分 |
+| --- | --- | --- |
+| [Agent Skills](https://agentskills.io/specification) | 目录式安装、metadata 触发、渐进披露 | 不扩展其 SKILL.md 核心格式 |
+| [MCP](https://modelcontextprotocol.io/docs/learn/architecture) | 能力发现与执行分离、显式接口 | 不为本地 Skill 启动 JSON-RPC 服务 |
+| [A2A](https://a2a-protocol.org/latest/specification/) | Task 状态、Artifact、终态不可重开 | 不实现网络传输、消息流和 Agent Card |
+| [LangGraph](https://docs.langchain.com/oss/python/langgraph/persistence) | checkpoint、interrupt、恢复前保证副作用幂等 | 不绑定图运行时或模型 SDK |
+| [CrewAI Flows](https://docs.crewai.com/en/concepts/flows) | 结构化状态与显式恢复入口 | 不把本地 SQLite 当作跨机器事实源，也不引入 Crew、decorator 或 LLM 依赖 |
+| [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/handoffs/) | 结构化 handoff、输入过滤、guardrail 边界 | 不绑定模型 provider 或会话实现 |
+| [AutoGen](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html) | 单 Agent 优先、复杂时才组 team | 不采用共享群聊作为数据总线 |
 
-`$ars create skill` 创建新的原生 Ars，`$to-ars` 原地迁移自有 Skill 或为第三方 Skill 创建非侵入 Adapter。格式兼容的 Artifact 直接传递；不兼容时必须安排显式 Adapter Task。
+这些框架面向常驻 Agent 应用；本仓库面向可复制的 Skill 包和本地编码 Agent。直接依赖其中任何运行时都会增加安装、模型和宿主耦合，因此只保留已验证的不变量。
 
-## Noctis 编排
+## 技术选型
 
-Noctis 是可选的通用 Ars 编排与执行底座，不是原生 Ars 的运行前提：
+- **Python 3.11+ 标准库**：CLI 不依赖 PyYAML、Pydantic、Web 服务或特定模型 SDK。
+- **追加式 JSON + Git**：Plan、Result 和每个状态事件都是独立严格 JSON；Git commit 是持久检查点，clone 后可重放恢复，不提交二进制数据库。
+- **本机 SQLite 缓存**：只协调当前 worktree 的 claim 与当前机器授权；删除缓存不会丢失持久状态，旧授权不会因 clone 自动生效。
+- **协作式调度**：脚本返回 Task envelope，当前 Agent 宿主加载 provider Skill；不伪造一个不存在的通用 Skill 调用 API。
+- **显式 Artifact locator**：区分 workspace path、Git commit、HTTP(S) URI 和 inline data，并验证本地证据与完整 commit。
 
-- `noctis` 选择 Task、Unit 或 Work，确认依赖、Artifact Binding、完成条件与授权并生成 ExecutionPlan。
-- `noctis-exec` 创建和推进结构化生命周期，调度计划中固化的 Ars/support，并校验 Artifact 输入输出。
-- `noctis-continue` 在断点、换对话、换模型或换 Agent 后重建最小入口和 resolved inputs，再交回 Exec。
-
-Workflow 不限于编码，例如：
-
-```text
-design -> implement -> code-review -> verify
-data-cleaning -> data-validation -> to-excel
-research -> draft -> review -> to-document
-```
-
-目标项目中的持久化结构为：
+## 目录
 
 ```text
-<project-root>/
-└── Noctis/
-    ├── registry.yaml
-    └── <domain>/
-        ├── tasks/<task-id>/                 # 可恢复单 Task 模式
-        │   ├── noctis.md
-        │   └── <record>.md
-        ├── units/<unit-id>/                 # 单 Unit 模式
-        │   ├── noctis.md
-        │   ├── scenarios.md
-        │   └── tracks/<track-id>/
-        └── work/<work-id>/                  # 多 Unit 模式
-            ├── noctis.md
-            └── units/<unit-id>/
-                ├── noctis.md
-                ├── scenarios.md
-                └── tracks/<track-id>/
-                    ├── implementation.md
-                    ├── review.md
-                    ├── verification.md
-                    └── evidence/
+skills/
+├── ars/          # 创建、迁移和验证 Ars manifest
+├── noctis/       # 计划、状态、领取、完成与恢复
+├── implement/    # 代码和配置变更
+├── code-review/  # 只读变更审查
+└── verify/       # 行为验收与证据
 ```
 
-- Work 编排通常串行的 Unit；Unit 表示一个需求的完整实现，并用 Task 依赖图表达跨项目并行与集成汇合。
-- Track 只是按项目或集成范围组织文件的可选分组，不具有状态；Step 由原子 Skill 在 Task 内部维护。
-- `$noctis init` 从可用 Ars 的 `ars.yaml` 生成项目级注册表；不同内容不会静默覆盖。
-- `$noctis workflow=reviewed` 等数据式调用生成确认后的 ExecutionPlan；Exec 先物化为 pending `noctis.md`，再从该记录生成统一 ExecutionEntry。
-- `$noctis` 启动时当前 Agent 先展示项目内已有 pending、active、blocked 工作流供用户继续，也允许创建新计划；注册表模板只用于生成新候选，`default_workflow` 只作为推荐。
-- `$noctis $implement $code-review` 可提前显式加载能力，但仍需确认层级、Task 图和授权。
-- `$noctis continue` 或 `$noctis-continue` 先选择未完成状态机实例，再选择其中 active、ready 或 blocked 的 Task/Unit 入口；一个 Unit 可在不同 Track 上同时提供多条入口。
-- `$implement`、`$code-review` 和 `$verify` 仍可独立调用且不创建 `noctis.md`；只有经 Noctis/Exec 启动的单 Task 才持久化。
+每个 Skill 均可独立安装。`noctis-exec` 和 `noctis-continue` 已合并回 `noctis`，因为它们共享同一个状态机和恢复不变量；`to-ars` 已合并回 `ars`，因为迁移只是 Skill 作者工作流的一个入口。
 
-执行记录与能力文档都由脚本创建和更新。`revision` 提供并发保护，稳定 slot/item 允许 Exec 在启用新能力时持久扩展已有文档，而不修改源模板或覆盖其他能力的内容。
+这是破坏性状态迁移：旧 `ars.yaml`、`Noctis/registry.yaml`、`Noctis/**/*.md` 和 `.ars/noctis.sqlite3` 不会被新运行时自动当作事实源。仍在执行的旧 Run 应先依据 workspace、Git 和外部证据对账，再显式创建 Git-backed Run；不要把旧文件或数据库存在直接等同于新 Task 已完成。
 
-## 生命周期
+## 公共契约
 
-1. 用真实触发语句确认 Skill 的职责、非目标和升级边界。
-2. 使用官方 Skill 初始化工具生成最小骨架。
-3. 编写精简的 `SKILL.md`，仅在确有复用价值时增加资源目录。
-4. 运行结构校验，并用不携带预设答案的真实任务做正向验证。
-5. 根据实际使用中的误触发、漏触发和额外流程成本迭代。
+- `ars.skill/v1`：provider ID、SemVer、capability、`ars.task/v1 -> ars.result/v1` 和副作用上界。
+- `ars.plan/v1`：一个 Run 的 workspace 和 Task DAG；Task 显式绑定 provider，不使用中心注册表或路径优先级。
+- `ars.task/v1`：本机 claim、attempt、revision、workspace、Git checkpoint、resolved inputs、验收条件、grant 和幂等键。
+- `ars.result/v1`：终态、Artifact、evidence 和实际 effect receipt。
+- `ars.run-record/v1` 与 `ars.event/v1`：不可变 Run 元数据和按 Task revision 追加的持久状态转换。
 
-## 仓库验证
+Task 的持久状态为 `pending -> completed | failed | blocked | input-required`，也可显式变为 `canceled`；`working` 只是当前机器缓存中的 claim。代码、Result 和 Event 提交并推送后才构成跨机器检查点。新 clone 重放已提交事件：已有 Result 的 Task 保持终态，没有 Result 的旧 claim 回到 `pending`。`completed` 与 `canceled` 不重开；后续修订创建新 Task 或新 Run。
 
-使用统一入口校验所有 Ars manifest、Skill 结构、触发评测语料、共享 Artifact 契约与文档工具同步状态和测试目录。显式传入当前环境官方 `quick_validate.py`，不要依赖固定安装路径：
+## 快速使用
+
+```powershell
+python skills/ars/scripts/ars.py validate --skill skills/implement
+python skills/noctis/scripts/noctis.py catalog --skills-root skills
+python skills/noctis/scripts/noctis.py plan-check --project . --plan skills/noctis/assets/plan.example.json --skills-root skills
+```
+
+创建 Run、授权、领取、完成和恢复命令见 `skills/noctis/references/operations.md`。仓库级校验：
 
 ```powershell
 python scripts/validate_repository.py --quick-validate <path-to-quick_validate.py>
 ```
 
-脚本强制使用 UTF-8，并分别发现仓库级测试和各 Skill 的测试目录；没有发现任何测试时返回失败。
-
-实际触发率评测通过独立 evaluator 协议运行，每个请求从标准输入接收一条 case，并返回 `{"trigger": true|false}`：
+触发语料结构校验不等于模型评测。真实 precision/recall 仍通过独立 evaluator 运行：
 
 ```powershell
 python scripts/evaluate_triggers.py --evaluator <evaluator.py> --min-precision 0.8 --min-recall 0.8
 ```
-
-## Skills
-
-| Skill | 目标 | 状态 |
-| --- | --- | --- |
-| `ars` | 创建、检查并验证 Noctis 原生 Ars | 可用 |
-| `to-ars` | 原地迁移 Skill 或创建非侵入 Ars Adapter | 可用 |
-| `noctis` | 规划 Work、Unit、Task、Artifact Binding 并生成 ExecutionPlan | 可用 |
-| `noctis-exec` | 管理执行生命周期、Artifact、状态恢复与文档扩展 | 可用 |
-| `noctis-continue` | 在无上下文时恢复执行入口与 resolved inputs | 可用 |
-| `implement` | 执行 Implement、fix-review 或 fix-verification Task，并维护内部 Step 与提交记录 | 可用 |
-| `code-review` | 对 Task 精确提交执行静态审查和定向修复复核 | 可用 |
-| `verify` | 按 Unit 场景执行人工、AI 或辅助式行为验收 | 可用 |
