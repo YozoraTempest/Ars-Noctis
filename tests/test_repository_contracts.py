@@ -36,6 +36,41 @@ class RepositoryContractTests(unittest.TestCase):
             },
             {"ars", "noctis"},
         )
+        self.assertEqual(
+            {
+                item["id"]
+                for item in distribution["skills"]
+                if "git" in item.get("requires", {}).get("executables", [])
+            },
+            {"ars", "noctis"},
+        )
+        self.assertEqual(
+            {
+                item["id"]
+                for item in distribution["skills"]
+                if item.get("checks")
+            },
+            {"ars", "noctis"},
+        )
+
+    def test_node_doctor_has_no_skill_specific_branches(self) -> None:
+        doctor = (ROOT / "lib" / "doctor.mjs").read_text(encoding="utf-8")
+        self.assertNotIn("ars.json", doctor)
+        self.assertNotIn("'ars'", doctor)
+        self.assertNotIn("'noctis'", doctor)
+        self.assertIn("skill.checks", doctor)
+
+    def test_ci_checks_supported_node_versions_before_minimal_publish_job(self) -> None:
+        ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        publish = (ROOT / ".github" / "workflows" / "publish.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("pull_request:", ci)
+        self.assertIn("node: [22, 24]", ci)
+        self.assertIn("needs: package", publish)
+        self.assertEqual(publish.count("id-token: write"), 1)
+        self.assertLess(publish.index("publish:"), publish.index("id-token: write"))
+        self.assertNotRegex(ci + publish, r"uses:\s+[^\s]+@v\d")
 
     def test_repository_contains_five_independent_skill_entrypoints(self) -> None:
         actual = {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   mkdtemp,
   mkdir,
@@ -25,6 +25,7 @@ import {
   resolveInstallation,
   updateSkills,
 } from '../lib/installer.mjs';
+import { isSemVer } from '../lib/semver.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = path.join(ROOT, 'bin', 'ars-noctis.mjs');
@@ -46,6 +47,23 @@ function coreSkills() {
   return selectSkills(distribution, { profile: 'core' });
 }
 
+function runCli(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [BIN, ...args], { windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (value) => { stdout += value; });
+    child.stderr.on('data', (value) => { stderr += value; });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr || stdout || `CLI exited ${code}`));
+    });
+  });
+}
+
 test('distribution exposes declarative profiles and independent skills', () => {
   assert.equal(distribution.id, 'ars-noctis');
   assert.equal(distribution.defaultProfile, 'core');
@@ -58,6 +76,10 @@ test('distribution exposes declarative profiles and independent skills', () => {
     selectSkills(distribution, { skillIds: ['verify'] }).map((skill) => skill.id),
     ['verify'],
   );
+  assert.deepEqual(distribution.byId.get('ars').requires.executables, ['git']);
+  assert.deepEqual(distribution.byId.get('noctis').requires.pythonModules, ['sqlite3']);
+  assert.deepEqual(distribution.byId.get('verify').requires.executables, []);
+  assert.deepEqual(distribution.byId.get('ars').checks.map((check) => check.id), ['manifest']);
 });
 
 test('core init installs deterministic runtime payload and record', async (t) => {
@@ -90,6 +112,58 @@ test('init and update are idempotent', async (t) => {
   const updated = await updateSkills({ distribution, installation });
   assert.equal(updated.command, 'update');
   assert.deepEqual(updated.actions.map((action) => action.status), ['unchanged', 'unchanged']);
+});
+
+test('concurrent installs serialize record and target promotion', async (t) => {
+  const { installation } = await context(t);
+  await Promise.all(
+    distribution.skills.map((skill) => installSkills({
+      distribution,
+      installation,
+      skills: [skill],
+    })),
+  );
+
+  const record = await readInstallRecord(installation, distribution, { required: true });
+  assert.deepEqual(Object.keys(record.skills).sort(), distribution.skills.map((skill) => skill.id).sort());
+  for (const skill of distribution.skills) {
+    assert.equal(
+      (await readFile(path.join(installation.skillsRoot, skill.id, 'SKILL.md'), 'utf8'))
+        .includes(`name: ${skill.id}`),
+      true,
+    );
+  }
+  await assert.rejects(readFile(path.join(installation.skillsRoot, '.ars-noctis-lock', 'owner.json')));
+});
+
+test('concurrent installs of one skill do not roll back another promotion', async (t) => {
+  const { installation } = await context(t);
+  const verify = selectSkills(distribution, { skillIds: ['verify'] });
+  const results = await Promise.all(
+    Array.from({ length: 4 }, () => installSkills({
+      distribution,
+      installation,
+      skills: verify,
+    })),
+  );
+
+  assert.equal(results.flatMap((result) => result.actions).filter((item) => item.status === 'installed').length, 1);
+  assert.equal(
+    (await readFile(path.join(installation.skillsRoot, 'verify', 'SKILL.md'), 'utf8'))
+      .includes('name: verify'),
+    true,
+  );
+});
+
+test('concurrent CLI processes preserve every installation record entry', async (t) => {
+  const { project, installation } = await context(t);
+  const skillIds = ['implement', 'code-review', 'verify'];
+  await Promise.all(
+    skillIds.map((id) => runCli(['init', project, '--skill', id, '--json'])),
+  );
+
+  const record = await readInstallRecord(installation, distribution, { required: true });
+  assert.deepEqual(Object.keys(record.skills).sort(), [...skillIds].sort());
 });
 
 test('full profile installs every currently declared skill', async (t) => {
@@ -278,6 +352,23 @@ test('doctor separates runtime readiness from installation integrity', async (t)
   assert.equal(result.issues.some((issue) => issue.code === 'modified_skill'), false);
 });
 
+test('doctor requirements and checks are driven by the selected skills', async (t) => {
+  const { project, installation } = await context(t);
+  await installSkills({
+    distribution,
+    installation,
+    skills: selectSkills(distribution, { skillIds: ['verify'] }),
+  });
+  const result = await doctorInstallation({
+    distribution,
+    installation,
+    python: path.join(project, 'missing-python'),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.python, null);
+  assert.deepEqual(result.executables, {});
+});
+
 test('runtime caches do not count as managed skill modifications', async (t) => {
   const { installation } = await context(t);
   await installSkills({ distribution, installation, skills: coreSkills() });
@@ -297,6 +388,26 @@ test('install record can be read after explicit single-skill installation', asyn
   });
   const record = await readInstallRecord(installation, distribution, { required: true });
   assert.deepEqual(Object.keys(record.skills), ['verify']);
+});
+
+test('prerelease SemVer survives install record and update round trip', async (t) => {
+  const { installation } = await context(t);
+  const prereleaseDistribution = {
+    ...distribution,
+    package: { ...distribution.package, version: '0.2.0-beta.1+build.7' },
+  };
+  assert.equal(isSemVer(prereleaseDistribution.package.version), true);
+  assert.equal(isSemVer('0.2.0-01'), false);
+
+  await installSkills({
+    distribution: prereleaseDistribution,
+    installation,
+    skills: selectSkills(prereleaseDistribution, { skillIds: ['verify'] }),
+  });
+  const record = await readInstallRecord(installation, prereleaseDistribution, { required: true });
+  assert.equal(record.skills.verify.version, prereleaseDistribution.package.version);
+  const updated = await updateSkills({ distribution: prereleaseDistribution, installation });
+  assert.equal(updated.actions[0].status, 'unchanged');
 });
 
 test('install record cannot be replaced by a symbolic link', async (t) => {

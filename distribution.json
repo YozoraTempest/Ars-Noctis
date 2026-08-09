@@ -20,15 +20,48 @@
       "id": "ars",
       "source": "skills/ars",
       "requires": {
-        "python": ">=3.11"
-      }
+        "python": ">=3.11",
+        "executables": [
+          "git"
+        ]
+      },
+      "checks": [
+        {
+          "id": "manifest",
+          "run": "python",
+          "path": "scripts/ars.py",
+          "args": [
+            "validate",
+            "--skill",
+            "."
+          ]
+        }
+      ]
     },
     {
       "id": "noctis",
       "source": "skills/noctis",
       "requires": {
-        "python": ">=3.11"
-      }
+        "python": ">=3.11",
+        "python_modules": [
+          "sqlite3"
+        ],
+        "executables": [
+          "git"
+        ]
+      },
+      "checks": [
+        {
+          "id": "example-plan",
+          "run": "python",
+          "path": "scripts/noctis.py",
+          "args": [
+            "plan-check",
+            "--plan",
+            "assets/plan.example.json"
+          ]
+        }
+      ]
     },
     {
       "id": "implement",
