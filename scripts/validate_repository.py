@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,8 @@ EXAMPLE_PLAN = SKILLS / "noctis" / "assets" / "plan.example.json"
 ARS_EXAMPLE_PLAN = SKILLS / "ars" / "assets" / "noctis-plan.example.json"
 ARS_EXAMPLE_EXTENSION = SKILLS / "ars" / "assets" / "noctis-extension.example.json"
 EVALS = ROOT / "scripts" / "validate_evals.py"
+PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_package.mjs"
+INSTALLER_TESTS = ROOT / "tests" / "test_installer.mjs"
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +68,10 @@ def main() -> int:
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     python = sys.executable
+    node = shutil.which("node")
+    if node is None:
+        print("Node.js 22+ is required for package validation", file=sys.stderr)
+        return 2
     skill_directories = sorted(
         path for path in SKILLS.iterdir() if (path / "SKILL.md").is_file()
     )
@@ -75,6 +82,8 @@ def main() -> int:
         return 2
 
     try:
+        run([node, str(PACKAGE_VALIDATOR)], env)
+        run([node, "--test", str(INSTALLER_TESTS)], env)
         run([python, str(EVALS)], env)
         for skill in native:
             run([python, str(ARS), "validate", "--skill", str(skill)], env)

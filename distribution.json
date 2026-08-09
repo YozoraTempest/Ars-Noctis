@@ -1,0 +1,46 @@
+{
+  "schema": "ars-noctis.distribution/v1",
+  "id": "ars-noctis",
+  "default_profile": "core",
+  "profiles": {
+    "core": [
+      "ars",
+      "noctis"
+    ],
+    "full": [
+      "ars",
+      "noctis",
+      "implement",
+      "code-review",
+      "verify"
+    ]
+  },
+  "skills": [
+    {
+      "id": "ars",
+      "source": "skills/ars",
+      "requires": {
+        "python": ">=3.11"
+      }
+    },
+    {
+      "id": "noctis",
+      "source": "skills/noctis",
+      "requires": {
+        "python": ">=3.11"
+      }
+    },
+    {
+      "id": "implement",
+      "source": "skills/implement"
+    },
+    {
+      "id": "code-review",
+      "source": "skills/code-review"
+    },
+    {
+      "id": "verify",
+      "source": "skills/verify"
+    }
+  ]
+}

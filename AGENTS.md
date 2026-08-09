@@ -4,6 +4,8 @@
 
 本仓库维护可独立安装的 Agent Skills、Ars 组合协议，以及协议无关的 Noctis 持久任务运行时。`SKILL.md` 负责触发和行为；`ars.json` 只负责 Ars 能力发现；Noctis 只负责通用 Task DAG、持久状态与公共 envelope 校验。
 
+npm/Node.js 是仓库级发行与安装层，只按 `distribution.json` 管理独立 Skill 文件；它不得解释 Ars Task、调用 provider 或修改 Noctis Run。Python 仍是 Ars adapter 与 Noctis Core 运行时。
+
 - 单个 Skill 能完成的任务直接调用，不创建 Noctis Run。
 - 每个 `skills/<name>/` 是独立安装单元，不按固定安装路径导入其他 Skill。
 - Ars 多 Skill 组合通过 `ars.skill/v1`、`ars.task/v1`、`ars.result/v1` 和 Artifact v1；Ars 通过 adapter 使用 `noctis.*` 公共契约。
@@ -25,6 +27,7 @@
 
 - 新建 Skill 使用当前宿主提供的官方初始化工具。
 - 修改 Skill 后运行官方快速校验；修改脚本时运行代表性 CLI 用例和单元测试。
+- 修改 npm 发行层时运行 `npm run check`、真实 `npm pack` tarball 冒烟和冲突/回滚测试。
 - 修改触发描述时更新不泄露预期答案的正向、负向和重叠评测请求。
 - 未经明确要求，不提交、不推送、不发布，也不修改远程状态。
 

@@ -14,6 +14,29 @@ EXPECTED = {"ars", "noctis", "implement", "code-review", "verify"}
 
 
 class RepositoryContractTests(unittest.TestCase):
+    def test_npm_distribution_is_declarative_and_keeps_core_optional(self) -> None:
+        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        distribution = json.loads(
+            (ROOT / "distribution.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(package["name"], "ars-noctis")
+        self.assertEqual(package["bin"], {"ars-noctis": "bin/ars-noctis.mjs"})
+        self.assertEqual(package["engines"], {"node": ">=22"})
+        self.assertNotIn("dependencies", package)
+        self.assertEqual(distribution["schema"], "ars-noctis.distribution/v1")
+        self.assertEqual(distribution["profiles"]["core"], ["ars", "noctis"])
+        self.assertEqual(
+            {item["id"] for item in distribution["skills"]}, EXPECTED
+        )
+        self.assertEqual(
+            {
+                item["id"]
+                for item in distribution["skills"]
+                if item.get("requires", {}).get("python")
+            },
+            {"ars", "noctis"},
+        )
+
     def test_repository_contains_five_independent_skill_entrypoints(self) -> None:
         actual = {
             path.name for path in SKILLS.iterdir() if (path / "SKILL.md").is_file()

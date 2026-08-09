@@ -1,0 +1,49 @@
+{
+  "name": "ars-noctis",
+  "version": "0.1.0",
+  "description": "Install and manage the Ars Agent Skills adapter and Noctis durable task runtime.",
+  "type": "module",
+  "bin": {
+    "ars-noctis": "bin/ars-noctis.mjs"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "distribution.json",
+    "skills/*/SKILL.md",
+    "skills/*/agents/**/*",
+    "skills/*/ars.json",
+    "skills/*/assets/**/*",
+    "skills/*/references/**/*",
+    "skills/*/scripts/**/*",
+    "!skills/**/__pycache__/**/*",
+    "!skills/**/*.pyc",
+    "!skills/**/*.pyo"
+  ],
+  "scripts": {
+    "test": "node --test tests/test_installer.mjs",
+    "check": "node scripts/validate_package.mjs && npm test",
+    "prepack": "npm run check"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YozoraTempest/Ars-Noctis.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YozoraTempest/Ars-Noctis/issues"
+  },
+  "homepage": "https://github.com/YozoraTempest/Ars-Noctis#readme",
+  "keywords": [
+    "agent-skills",
+    "codex",
+    "task-dag",
+    "workflow"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
