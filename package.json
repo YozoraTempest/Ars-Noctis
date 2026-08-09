@@ -1,6 +1,6 @@
 {
   "name": "ars-noctis",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Install and manage the Ars Agent Skills adapter and Noctis durable task runtime.",
   "type": "module",
   "bin": {
