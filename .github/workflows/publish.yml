@@ -106,4 +106,4 @@ jobs:
 
       - name: Publish package
         shell: bash
-        run: npm publish package/ars-noctis-*.tgz --access public --ignore-scripts
+        run: npm publish ./package/ars-noctis-*.tgz --access public --ignore-scripts

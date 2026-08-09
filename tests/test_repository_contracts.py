@@ -70,6 +70,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("needs: package", publish)
         self.assertEqual(publish.count("id-token: write"), 1)
         self.assertLess(publish.index("publish:"), publish.index("id-token: write"))
+        self.assertIn("npm publish ./package/ars-noctis-*.tgz", publish)
         self.assertNotRegex(ci + publish, r"uses:\s+[^\s]+@v\d")
 
     def test_repository_contains_five_independent_skill_entrypoints(self) -> None:
