@@ -1,0 +1,61 @@
+name: Publish npm
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'YozoraTempest/Ars-Noctis'
+    runs-on: ubuntu-latest
+    environment: npm
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "v$version"
+
+      - name: Install package metadata
+        run: npm ci --ignore-scripts
+
+      - name: Validate npm distribution
+        run: npm run check
+
+      - name: Validate trigger evaluations
+        run: python scripts/validate_evals.py
+
+      - name: Run repository contract tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v
+
+      - name: Run Ars tests
+        run: python -m unittest discover -s skills/ars/tests -p "test_*.py" -v
+
+      - name: Run Noctis tests
+        run: python -m unittest discover -s skills/noctis/tests -p "test_*.py" -v
+
+      - name: Publish package
+        run: npm publish --access public
