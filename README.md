@@ -1,6 +1,7 @@
 # Ars-Noctis
 
 [![npm version](https://img.shields.io/npm/v/ars-noctis.svg)](https://www.npmjs.com/package/ars-noctis)
+[![CI](https://github.com/YozoraTempest/Ars-Noctis/actions/workflows/ci.yml/badge.svg)](https://github.com/YozoraTempest/Ars-Noctis/actions/workflows/ci.yml)
 [![Publish npm](https://github.com/YozoraTempest/Ars-Noctis/actions/workflows/publish.yml/badge.svg)](https://github.com/YozoraTempest/Ars-Noctis/actions/workflows/publish.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -13,7 +14,7 @@ Ars-Noctis 发布一组可独立安装的 Agent Skills，以及一个协议无�
 
 ## 快速开始
 
-安装器要求 Node.js 22+。Ars Adapter 与 Noctis Core 运行时要求 Python 3.11+、标准库中的 `sqlite3` 与 Git。
+安装器要求 Node.js 22+。Ars Adapter 要求 Python 3.11+ 与 Git；Noctis Core 另外要求标准库中的 `sqlite3`。实际检查项由每个 Skill 在 `distribution.json` 中声明。
 
 在需要接入的项目根目录执行：
 
@@ -59,7 +60,7 @@ npx ars-noctis@latest init --profile full
 npx ars-noctis@latest init --skill verify
 ```
 
-新增 Skill 只需在 `distribution.json` 中声明；Node.js 安装器不为具体 provider 编写分支。
+新增 Skill 只需在 `distribution.json` 中声明文件来源、运行时要求和可选自检；Node.js 安装器与 doctor 不为具体 Skill 或 provider 编写分支。
 
 ## 安装器 CLI
 
@@ -67,7 +68,7 @@ npx ars-noctis@latest init --skill verify
 | --- | --- |
 | `init [path]` | 安装 profile 或一个/多个 Skill；默认使用 `core` |
 | `update [path]` | 用当前 CLI 包刷新已管理 Skill |
-| `doctor [path]` | 检查摘要、manifest、Python、SQLite、Git 及代表性运行时契约 |
+| `doctor [path]` | 检查文件摘要、声明的运行时要求及 Skill 自检 |
 | `list [path]` | 列出 profile、可用 Skill 与安装状态 |
 | `remove [path] --skill <id>` | 移除受管理 Skill |
 
@@ -101,6 +102,7 @@ npx ars-noctis@latest update
 - 未管理的不同内容或受管理文件的本地修改默认拒绝覆盖。
 - `--replace-modified` 将旧目录保存在 `.ars-noctis-backups/` 后再替换。
 - 写入使用临时目录、原子安装记录和失败回滚。
+- 同一安装目录的 `init`、`update` 与 `remove` 使用排他锁串行化；锁内重新读取记录和目标状态。
 - 安装路径、符号链接与 junction 会经过边界检查，不能逃出目标项目。
 - `remove` 只删除受管理且未修改的内容；有修改时同样要求显式备份。
 
@@ -166,7 +168,7 @@ Run 创建后、甚至完成后都可以追加 Task。`fix` 不是异常分支�
 执行器发现: review-change -> address-finding
 ```
 
-扩展只能增加 executor snapshot 和 Task，不能修改已有定义。每次扩展比较 `expected_run_revision`；revision 冲突时读取最新状态、重新合并，再提交新的 Extension。
+扩展只能增加 executor snapshot 和 Task，不能修改已有定义。同一 worktree 的持久变更由本机 mutation mutex 串行化，每次扩展再比较 `expected_run_revision`；revision 冲突时读取最新状态、重新合并，再提交新的 Extension。
 
 ## 架构边界
 
@@ -191,11 +193,11 @@ flowchart LR
 Noctis Core 的稳定职责只有四项：
 
 1. 校验通用 Plan、Extension、Claim 与 Result。
-2. 通过 Task revision 和 Run revision 串行化状态转换。
+2. 通过本机 mutation mutex 与 Task/Run revision 串行化状态转换。
 3. 将 Plan、Result 和追加 Event 保存到 `.noctis/runs/<run-id>/`，并从 Git clone 严格恢复。
-4. 在本机 SQLite 中保存可丢弃的 claim 与当前机器授权。
+4. 在本机 SQLite 中保存可丢弃的 mutation mutex、claim 与当前机器授权。
 
-Git 跟踪的追加式 JSON + Git 是持久事实源；`.git/noctis/cache.sqlite3` 只是本机协调缓存。Task 持久状态为 `pending -> completed | failed | blocked | input-required | canceled`，`working` 只是本机 claim 的投影视图。
+Git 跟踪的追加式 JSON + Git 是持久事实源；`.git/noctis/cache.sqlite3` 只是同一 worktree 的协调缓存，不是跨 clone 的分布式锁。Task 持久状态为 `pending -> completed | failed | blocked | input-required | canceled`，`working` 只是本机 claim 的投影视图。
 
 公共契约：
 
@@ -233,10 +235,10 @@ Git 跟踪的追加式 JSON + Git 是持久事实源；`.git/noctis/cache.sqlite
 ## 项目结构
 
 ```text
-.github/workflows/       # npm OIDC 发布流程
+.github/workflows/       # PR/main CI 与最小权限 npm OIDC 发布流程
 bin/                     # ars-noctis CLI 入口
 lib/                     # 发行清单、安装事务与运行时诊断
-distribution.json        # 可安装 Skill 与 profile
+distribution.json        # Skill、profile、运行时要求与声明式自检
 evals/                   # Skill 触发评估请求
 scripts/                 # 仓库级校验工具
 skills/
@@ -260,7 +262,7 @@ python scripts/validate_repository.py --quick-validate $QuickValidate
 npm pack --dry-run
 ```
 
-发布由 `.github/workflows/publish.yml` 完成。版本 tag 必须与 `package.json` 一致，GitHub `npm` Environment 审批后通过 OIDC 发布，并由 npm 自动生成 provenance；仓库不保存 `NPM_TOKEN`。
+PR 与 `main` 推送由 `.github/workflows/ci.yml` 在 Node.js 22/24 上验证。发布工作流先以无 OIDC 权限的 Job 完成同一矩阵验证并构建 tarball；只有依赖验证成功的最终 Job 才进入 GitHub `npm` Environment、取得 `id-token: write` 并发布 provenance，仓库不保存 `NPM_TOKEN`。所有第三方 Actions 固定到不可变提交 SHA。
 
 ```powershell
 $Version = "0.1.2"
