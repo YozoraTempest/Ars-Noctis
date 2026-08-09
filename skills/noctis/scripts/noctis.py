@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Public CLI and import surface for the Noctis runtime."""
+"""Public CLI for the protocol-neutral Noctis runtime."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 if str(SCRIPT_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIRECTORY))
 
-from noctis_runtime import *  # noqa: F401,F403,E402
+from noctislib.runtime import main  # noqa: E402
 
 
 if __name__ == "__main__":

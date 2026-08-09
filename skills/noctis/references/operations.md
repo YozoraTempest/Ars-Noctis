@@ -1,61 +1,75 @@
 # Runtime Operations
 
-只在执行或恢复 Run 时加载本文件。Git 中 `.ars/runs/<run-id>/` 是唯一持久事实；当前 worktree Git 元数据目录下的 `noctis/cache.sqlite3` 只保存本机 claim 与当前机器授权，天然不会进入提交。
+只在执行、扩展或恢复 Run 时加载本文件。以下命令均使用 `scripts/noctis.py`；Git 中 `.noctis/runs/<run-id>/` 是唯一持久事实。
 
-## 创建和推进
+## 创建与推进
 
 ```powershell
-# 发现 provider 并校验 Plan
-python scripts/noctis.py catalog --skills-root <skills-root>
-python scripts/noctis.py plan-check --project <project> --plan <plan.json> --skills-root <skills-root>
+python scripts/noctis.py plan-check --plan <noctis-plan.json>
+python scripts/noctis.py run-create --project <project> --plan <noctis-plan.json>
 
-# 创建 Run；workspace.write 必须和 git.commit 一起请求与授权
-python scripts/noctis.py run-create --project <project> --plan <plan.json> --skills-root <skills-root> --grant workspace.write --grant git.commit --grant command.execute --grant-reason "用户要求实现、提交并运行测试" --confirm-high-risk
-
-# 宿主在明确授权下提交并推送 CLI 返回的 checkpoint 文件；Noctis 不自行执行 Git 写入
-git add .ars/runs/<run-id>
+git add .noctis/runs/<run-id>
 git commit -m "chore(noctis): 保存运行检查点"
-git push
 
-# 领取 Task；Run JSON 和目标 workspace 必须已提交且无本地改动
 python scripts/noctis.py task-claim --project <project> --run-id <uuid> --task-id <task-id>
+python scripts/noctis.py task-finish --project <project> --run-id <uuid> --task-id <task-id> --claim-id <uuid> --expected-revision <n> --result <noctis-result.json>
 
-# Provider 完成 workspace.write 时先提交全部产物、确认 workspace 清洁，并在 Result 中返回同 SHA 的 Git Artifact 与 git.commit receipt
-python scripts/noctis.py task-finish --project <project> --run-id <uuid> --task-id <task-id> --claim-id <uuid> --expected-revision <n> --result <result.json>
-
-# 再提交并推送 task-finish 返回的 Result/Event 路径，之后才能领取后继 Task
-git add .ars/runs/<run-id>
+git add .noctis/runs/<run-id>
 git commit -m "chore(noctis): 记录任务结果"
-git push
 ```
 
-每次 `task-finish`、`task-retry`、`task-cancel`、`grant` 或 `revoke` 都返回 `checkpoint_required`。这些文件与对应业务产物进入可获取分支后，才构成跨机器恢复边界。CLI 的 `checkpoint.pushed` 只依据本地 upstream tracking ref 判断；没有执行 fetch 时不能把它当作远端实时证明。
+Plan 创建时已有明确授权的 requirement 可传给 `run-create --grant <id> --grant-reason <reason>`。Noctis 只记录标识和理由，不判断其风险；调用方仍负责真实授权边界。
 
-## 查看和克隆恢复
+领取要求 Run 当前 JSON 已提交。`task-finish` 要求当前 HEAD 继承领取时 checkpoint，并返回需要提交的 Result/Event 路径。Noctis 不执行 executor、不提交、不推送，也不检查 opaque output 的领域正确性。
+
+## 动态扩展
+
+批量追加：
+
+```powershell
+python scripts/noctis.py extension-check --project <project> --run-id <uuid> --extension <extension.json>
+python scripts/noctis.py run-extend --project <project> --run-id <uuid> --extension <extension.json> --expected-run-revision <n>
+git add .noctis/runs/<run-id>
+git commit -m "chore(noctis): 追加运行任务"
+```
+
+追加单个 Task：
+
+```powershell
+python scripts/noctis.py task-add --project <project> --run-id <uuid> --task <task.json> --origin-kind user-request --reason "用户新增验收任务" --expected-run-revision <n>
+```
+
+若 Task 使用新的 executor，同时传 `--executor <executor.json>`。`extension-check` 返回当前 `run_revision`、新增项和 `missing_grants`。`run-extend` 使用 optimistic concurrency；revision 冲突时重新读取 Run、合并新变化，再提交新的 Extension。
+
+不要把新增目标伪装成 retry，也不要修改 Plan。Retry 表示同一 Task 的同一 request 再尝试；Extension 表示 Run 获得了新的工作。
+
+## 查看与恢复
 
 ```powershell
 python scripts/noctis.py run-show --project <project>
 python scripts/noctis.py run-show --project <project> --run-id <uuid>
 python scripts/noctis.py run-events --project <project> --run-id <uuid> --limit 100
-
-# 新 clone 或明确放弃本机执行现场时重建空缓存
 python scripts/noctis.py recover --project <project> --run-id <uuid>
 ```
 
-`recover` 丢弃本机 claim 与活动授权，再从严格 JSON 重放状态。已有合法 Result/Event 的 Task 保持终态；没有持久 Result 的旧执行现场不恢复，对应 Task 按最后提交状态重新成为 `pending`。克隆后 effect-free Task 可直接领取；需要副作用的 Task 必须重新获得当前机器授权。
+`recover` 严格重放 Git JSON，然后清空整个 worktree 的本机 claim 和活动授权缓存。已有合法 Result/Event 的 Task 保持终态；没有持久 Result 的执行现场回到最后的持久状态。新 clone 必须重新激活当前机器授权。
 
-## 授权、失败和取消
+## Requirement
 
-新增授权调用 `grant --effect <effect> --reason <evidence>`。`git.commit`、`git.push`、`network.write`、`deployment` 和 `destructive` 还要求 `--confirm-high-risk`；该标记只是防误操作，不能替代用户授权。首次加入 Run 的 effect 会追加 Grant 事件；新 clone 对已有 effect 再次授权时只激活本机缓存，`checkpoint_required` 为空，不制造重复事件。
+```powershell
+python scripts/noctis.py grant --project <project> --run-id <uuid> --requirement <id> --reason <reason>
+python scripts/noctis.py revoke --project <project> --run-id <uuid> --requirement <id> --reason <reason>
+```
 
-用户撤回授权时调用 `revoke --effect <effect> --reason <evidence>`。它立即清除本机授权并追加事件；已经被 provider 使用的副作用不会自动撤销。
+首次 grant 会追加持久 Run Event 并激活本机授权；已记录 requirement 在新机器再次 grant 时只激活本机缓存。Revoke 追加事件并立即移除本机授权。每个事件都必须提交后才成为跨机器事实。
 
-恢复异常时遵循：
+## 重试与取消
 
-1. 当前机器存在 working claim 时，先检查 Artifact、提交和外部 effect receipt。
-2. 已完成但尚未执行 `task-finish` 时，使用原 claim 提交 Result；如果 claim 已随旧机器丢失，则依据当前证据重新领取或返回 blocked，不伪造旧 claim。
-3. 无法证明完成且确需重试时调用 `task-retry --expected-revision <n> --reason <reason>`；可能已有副作用时增加 `--acknowledge-effects`。
-4. `failed`、`blocked`、`input-required` 可在原因解决后重试；`completed` 和 `canceled` 不可重开。
-5. 取消不会撤销副作用；取消有副作用可能性的本机 claim 时必须传入 `task-cancel --acknowledge-effects`。
+```powershell
+python scripts/noctis.py task-retry --project <project> --run-id <uuid> --task-id <id> --expected-revision <n> --reason <reason>
+python scripts/noctis.py task-cancel --project <project> --run-id <uuid> --task-id <id> --expected-revision <n> --reason <reason>
+```
 
-不要手工编辑 `.ars/runs/`、不要把本机缓存复制为项目状态，也不要凭工作树干净、文件存在或旧聊天声称来伪造完成状态。
+本机存在 claim 且 Task 有 requirements 时，重试或取消还需 `--acknowledge-requirements`。先核对 executor 可能已经产生的外部行为；该开关不会回滚它们。取消会级联到 pending 后继，但不会删除历史。
+
+不要手工编辑 `.noctis/runs/`，不要复制 `.git/noctis/cache.sqlite3`，不要把工作树干净或外部对象存在等同于 Task 已完成。

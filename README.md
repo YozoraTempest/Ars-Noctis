@@ -1,92 +1,118 @@
 # Ars-Noctis
 
-Ars-Noctis 是面向 Agent Skills 的轻量级组合协议。Ars 为标准 Skill 增加一个很小的能力清单；Noctis 在确有需要时把多个能力组成可恢复的 Task DAG。单个 Skill 始终可以独立触发，不需要安装或运行 Noctis。
+Ars-Noctis 包含两个方向明确、可独立安装的组件：
+
+- **Noctis Core** 是协议无关的、Git-backed 的持久 Task DAG。它只认识 executor、request、requirement、result 与追加事件。
+- **Ars** 是 Agent Skills 组合协议，也是 Noctis 的一个外部适配器。它发现 `ars.json`，并把 Ars Plan、Task 与 Result 映射到 Noctis 公共契约。
+
+依赖方向固定为 `Ars -> Noctis public contract`。Noctis 不导入 Ars、不扫描 `ars.json`，也没有 implement、code-review 或 verify 的专用流程。单个 Skill 始终可以独立触发，不需要安装 Noctis。
 
 ## 架构
 
 ```mermaid
 flowchart LR
-    U["用户请求"] --> D{"单个 Skill 足够?"}
-    D -->|是| S["直接加载 SKILL.md"]
-    D -->|否| C["扫描 ars.json 能力清单"]
-    C --> P["校验 ars.plan/v1"]
-    P --> G["Git 中的 Plan、Result 与追加 Event"]
-    G --> T["领取 ars.task/v1"]
-    T --> H["宿主加载绑定的 provider Skill"]
-    H --> R["返回 ars.result/v1"]
-    R --> G
-    G --> A["提交检查点后 Artifact 传给直接后继"]
+    U["用户或执行过程"] --> A["Ars 或其他 Adapter"]
+    A --> P["noctis.plan/v1"]
+    A --> X["noctis.extension/v1"]
+    P --> N["Noctis Core"]
+    X --> N
+    N --> C["noctis.claim/v1"]
+    C --> A
+    A --> T["ars.task/v1"]
+    T --> S["独立 Agent Skill"]
+    S --> R["ars.result/v1"]
+    R --> A
+    A --> O["noctis.result/v1"]
+    O --> N
+    N --> G[".noctis/runs + Git"]
 ```
 
-系统只有三层：
+Noctis Core 有四个稳定职责：
 
-1. **Skill 包层**：遵循 [Agent Skills 规范](https://agentskills.io/specification) 的 `SKILL.md`、可选脚本、引用和资产，负责安装、触发与独立执行。
-2. **能力契约层**：可选 `ars.json` 声明 capability、统一 Task/Result envelope 和可能副作用。Noctis 只扫描 manifest，不读取其他 Skill 正文，也不把控制面自身注册成可递归调度的 provider。
-3. **状态层**：Noctis 把 Run、Plan、Result 和追加事件保存到 Git 跟踪的 `.ars/runs/<run-id>/`。当前 worktree 的 Git 元数据目录只保存本机 claim 与当前机器授权，可以删除重建且不会进入提交。宿主仍负责真正加载 Skill 与使用工具。
+1. 校验通用 Plan、Extension、Claim 与 Result。
+2. 通过 Task revision 和 Run revision 串行化状态转换。
+3. 将 Plan、Result 和追加 Event 保存到 `.noctis/runs/<run-id>/`，并从 Git clone 恢复。
+4. 在本机 SQLite 中保存可丢弃的 claim 与当前机器授权。
 
-## 为什么这样选
+Adapter 负责所有领域语义。例如 Ars adapter 负责 provider 发现、capability/effect 校验、workspace 与 Git Artifact 证据、`ars.task/v1` 和 `ars.result/v1`；这些内容不进入 Noctis Core。
+
+## 动态 Task
+
+Run 创建后可随时追加 Task，包括 Run 已经完成之后。`noctis.extension/v1` 包含来源、可选的新 executor 快照和一个或多个新 Task。新增 Task 可以依赖已有 Task，已有 Task 与 executor 不可修改。
+
+因此 `fix` 不是 Noctis 的异常分支，`verify` 也不是预置阶段。它们只是 adapter 在运行过程中追加的普通 Task：
+
+```text
+初始 Plan: implement-change -> review-change
+用户追加:  implement-change -> verify-change
+执行器发现: review-change -> address-finding
+```
+
+每次扩展比较 `expected_run_revision`。同一 revision 上只有一个扩展可以成功，失败方读取新状态后重新合并，避免静默覆盖并发加入的工作。
+
+## 技术选择
 
 | 社区方案 | 采用的稳定概念 | 没有引入的部分 |
 | --- | --- | --- |
-| [Agent Skills](https://agentskills.io/specification) | 目录式安装、metadata 触发、渐进披露 | 不扩展其 SKILL.md 核心格式 |
-| [MCP](https://modelcontextprotocol.io/docs/learn/architecture) | 能力发现与执行分离、显式接口 | 不为本地 Skill 启动 JSON-RPC 服务 |
-| [A2A](https://a2a-protocol.org/latest/specification/) | Task 状态、Artifact、终态不可重开 | 不实现网络传输、消息流和 Agent Card |
-| [LangGraph](https://docs.langchain.com/oss/python/langgraph/persistence) | checkpoint、interrupt、恢复前保证副作用幂等 | 不绑定图运行时或模型 SDK |
-| [CrewAI Flows](https://docs.crewai.com/en/concepts/flows) | 结构化状态与显式恢复入口 | 不把本地 SQLite 当作跨机器事实源，也不引入 Crew、decorator 或 LLM 依赖 |
-| [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/handoffs/) | 结构化 handoff、输入过滤、guardrail 边界 | 不绑定模型 provider 或会话实现 |
-| [AutoGen](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html) | 单 Agent 优先、复杂时才组 team | 不采用共享群聊作为数据总线 |
+| [Agent Skills](https://agentskills.io/specification) | 目录安装、metadata 触发、渐进披露 | 不扩展 `SKILL.md` 核心格式 |
+| [MCP](https://modelcontextprotocol.io/docs/learn/architecture) | 能力发现与执行分离、显式接口 | 不实现网络传输或本地 JSON-RPC 服务 |
+| [A2A](https://a2a-protocol.org/latest/specification/) | Task 状态、Artifact、终态 | 不实现 Agent Card、消息流或远程协议 |
+| [LangGraph](https://docs.langchain.com/oss/python/langgraph/persistence) | checkpoint、恢复、幂等 | 不绑定图运行时或模型 SDK |
+| [CrewAI Flows](https://docs.crewai.com/en/concepts/flows) | 结构化状态、显式恢复 | 不引入 Crew、decorator 或 LLM 依赖 |
+| [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/handoffs/) | 结构化 handoff、输入边界 | 不绑定模型 provider 或会话实现 |
+| [AutoGen](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/teams.html) | 简单任务单 Agent 优先 | 不采用共享群聊作为状态总线 |
 
-这些框架面向常驻 Agent 应用；本仓库面向可复制的 Skill 包和本地编码 Agent。直接依赖其中任何运行时都会增加安装、模型和宿主耦合，因此只保留已验证的不变量。
-
-## 技术选型
-
-- **Python 3.11+ 标准库**：CLI 不依赖 PyYAML、Pydantic、Web 服务或特定模型 SDK。
-- **追加式 JSON + Git**：Plan、Result 和每个状态事件都是独立严格 JSON；Git commit 是持久检查点，clone 后可重放恢复，不提交二进制数据库。
-- **本机 SQLite 缓存**：只协调当前 worktree 的 claim 与当前机器授权；删除缓存不会丢失持久状态，旧授权不会因 clone 自动生效。
-- **协作式调度**：脚本返回 Task envelope，当前 Agent 宿主加载 provider Skill；不伪造一个不存在的通用 Skill 调用 API。
-- **显式 Artifact locator**：区分 workspace path、Git commit、HTTP(S) URI 和 inline data，并验证本地证据与完整 commit。
+- **Python 3.11+ 标准库**：运行时不依赖 Pydantic、数据库服务或模型 SDK。
+- **追加式 JSON + Git**：项目事实可审查、可 clone、可严格重放。
+- **本机 SQLite 缓存**：位于 Git 元数据目录，只协调 claim 和当前机器授权，不是持久事实源。
+- **不可变 executor 快照**：Run 不依赖之后变化的安装路径或运行时发现顺序。
+- **不解释 opaque data**：Noctis 保存 request/output，但业务校验由 adapter 完成。
 
 ## 目录
 
 ```text
 skills/
-├── ars/          # 创建、迁移和验证 Ars manifest
-├── noctis/       # 计划、状态、领取、完成与恢复
-├── implement/    # 代码和配置变更
-├── code-review/  # 只读变更审查
-└── verify/       # 行为验收与证据
+├── noctis/       # 协议无关 Core、公共契约和状态 CLI
+├── ars/          # Ars manifest 工具与 Noctis adapter
+├── implement/    # 独立代码变更 Skill
+├── code-review/  # 独立只读审查 Skill
+└── verify/       # 独立行为验收 Skill
 ```
 
-每个 Skill 均可独立安装。`noctis-exec` 和 `noctis-continue` 已合并回 `noctis`，因为它们共享同一个状态机和恢复不变量；`to-ars` 已合并回 `ars`，因为迁移只是 Skill 作者工作流的一个入口。
-
-这是破坏性状态迁移：旧 `ars.yaml`、`Noctis/registry.yaml`、`Noctis/**/*.md` 和 `.ars/noctis.sqlite3` 不会被新运行时自动当作事实源。仍在执行的旧 Run 应先依据 workspace、Git 和外部证据对账，再显式创建 Git-backed Run；不要把旧文件或数据库存在直接等同于新 Task 已完成。
+每个目录都是独立 Agent Skill，不按固定路径导入另一个 Skill。Ars adapter 是 Ars Skill 内部脚本；它与 Noctis 只交换 JSON。
 
 ## 公共契约
 
-- `ars.skill/v1`：provider ID、SemVer、capability、`ars.task/v1 -> ars.result/v1` 和副作用上界。
-- `ars.plan/v1`：一个 Run 的 workspace 和 Task DAG；Task 显式绑定 provider，不使用中心注册表或路径优先级。
-- `ars.task/v1`：本机 claim、attempt、revision、workspace、Git checkpoint、resolved inputs、验收条件、grant 和幂等键。
-- `ars.result/v1`：终态、Artifact、evidence 和实际 effect receipt。
-- `ars.run-record/v1` 与 `ars.event/v1`：不可变 Run 元数据和按 Task revision 追加的持久状态转换。
+- `noctis.plan/v1`：executor 快照与初始 Task DAG。
+- `noctis.extension/v1`：带来源记录的追加 executor/Task 集合。
+- `noctis.claim/v1`：某次领取的 executor、opaque request、前置结果、requirement 与 checkpoint。
+- `noctis.result/v1`：终态、摘要与 opaque output。
+- `noctis.run-record/v1`、`noctis.event/v1`：不可变 Run 元数据与追加状态转换。
+- `ars.skill/v1`、`ars.task/v1`、`ars.result/v1`：Ars adapter 管理的 Agent Skills 协议。
 
-Task 的持久状态为 `pending -> completed | failed | blocked | input-required`，也可显式变为 `canceled`；`working` 只是当前机器缓存中的 claim。代码、Result 和 Event 提交并推送后才构成跨机器检查点。新 clone 重放已提交事件：已有 Result 的 Task 保持终态，没有 Result 的旧 claim 回到 `pending`。`completed` 与 `canceled` 不重开；后续修订创建新 Task 或新 Run。
+Task 持久状态为 `pending -> completed | failed | blocked | input-required | canceled`。`working` 只是本机 claim 的投影视图。Run 完成后追加 Task 会重新变为 `submitted`，不是重开或改写旧 Task。
 
 ## 快速使用
 
+直接创建通用 Run：
+
 ```powershell
-python skills/ars/scripts/ars.py validate --skill skills/implement
-python skills/noctis/scripts/noctis.py catalog --skills-root skills
-python skills/noctis/scripts/noctis.py plan-check --project . --plan skills/noctis/assets/plan.example.json --skills-root skills
+python skills/noctis/scripts/noctis.py plan-check --plan skills/noctis/assets/plan.example.json
+python skills/noctis/scripts/noctis.py run-create --project . --plan skills/noctis/assets/plan.example.json
 ```
 
-创建 Run、授权、领取、完成和恢复命令见 `skills/noctis/references/operations.md`。仓库级校验：
+通过 Ars adapter 创建输入：
+
+```powershell
+python skills/ars/scripts/ars.py validate --skill skills/implement
+python skills/ars/scripts/ars_noctis.py plan-adapt --project . --plan skills/ars/assets/noctis-plan.example.json --skills-root skills > noctis-plan.json
+python skills/ars/scripts/ars_noctis.py extension-adapt --project . --extension skills/ars/assets/noctis-extension.example.json --skills-root skills > noctis-extension.json
+```
+
+详细运行命令见 `skills/noctis/references/operations.md`，Ars 映射与旧 `.ars/runs` 显式迁移见 `skills/ars/references/noctis-adapter.md`。旧 Run 不会被 Noctis 自动读取。
+
+仓库级验证：
 
 ```powershell
 python scripts/validate_repository.py --quick-validate <path-to-quick_validate.py>
-```
-
-触发语料结构校验不等于模型评测。真实 precision/recall 仍通过独立 evaluator 运行：
-
-```powershell
-python scripts/evaluate_triggers.py --evaluator <evaluator.py> --min-precision 0.8 --min-recall 0.8
 ```

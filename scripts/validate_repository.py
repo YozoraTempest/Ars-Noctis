@@ -13,8 +13,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 ARS = SKILLS / "ars" / "scripts" / "ars.py"
+ARS_NOCTIS = SKILLS / "ars" / "scripts" / "ars_noctis.py"
 NOCTIS = SKILLS / "noctis" / "scripts" / "noctis.py"
 EXAMPLE_PLAN = SKILLS / "noctis" / "assets" / "plan.example.json"
+ARS_EXAMPLE_PLAN = SKILLS / "ars" / "assets" / "noctis-plan.example.json"
+ARS_EXAMPLE_EXTENSION = SKILLS / "ars" / "assets" / "noctis-extension.example.json"
 EVALS = ROOT / "scripts" / "validate_evals.py"
 
 
@@ -82,10 +85,34 @@ def main() -> int:
                 python,
                 str(NOCTIS),
                 "plan-check",
+                "--plan",
+                str(EXAMPLE_PLAN),
+            ],
+            env,
+        )
+        run(
+            [
+                python,
+                str(ARS_NOCTIS),
+                "plan-adapt",
                 "--project",
                 str(ROOT),
                 "--plan",
-                str(EXAMPLE_PLAN),
+                str(ARS_EXAMPLE_PLAN),
+                "--skills-root",
+                str(SKILLS),
+            ],
+            env,
+        )
+        run(
+            [
+                python,
+                str(ARS_NOCTIS),
+                "extension-adapt",
+                "--project",
+                str(ROOT),
+                "--extension",
+                str(ARS_EXAMPLE_EXTENSION),
                 "--skills-root",
                 str(SKILLS),
             ],

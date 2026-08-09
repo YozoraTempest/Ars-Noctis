@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -10,25 +9,69 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-REPOSITORY_ROOT = SKILL_ROOT.parents[1]
-SCRIPT = SKILL_ROOT / "scripts" / "noctis.py"
-SKILLS_ROOT = REPOSITORY_ROOT / "skills"
+SCRIPT_ROOT = SKILL_ROOT / "scripts"
+SCRIPT = SCRIPT_ROOT / "noctis.py"
+sys.path.insert(0, str(SCRIPT_ROOT))
+
+from noctislib import contracts, runtime, state  # noqa: E402
 
 
-def load_module():
-    spec = importlib.util.spec_from_file_location("noctis_runtime_entry", SCRIPT)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"cannot load {SCRIPT}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+class StateReducerTests(unittest.TestCase):
+    def test_run_extension_reduces_without_git_or_executor_knowledge(self) -> None:
+        executor = {
+            "id": "local:worker:1",
+            "kind": "test",
+            "snapshot": {"version": 1},
+            "digest": None,
+        }
+        first = {
+            "id": "first",
+            "needs": [],
+            "executor": "local:worker:1",
+            "request": {"operation": "first"},
+            "requirements": [],
+        }
+        second = {
+            "id": "second",
+            "needs": ["first"],
+            "executor": "local:worker:1",
+            "request": {"operation": "second"},
+            "requirements": [],
+        }
+        event = {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "type": "run.tasks-added",
+            "previous_revision": 0,
+            "revision": 1,
+            "data": {
+                "extension": {
+                    "schema": "noctis.extension/v1",
+                    "origin": {
+                        "kind": "user-request",
+                        "summary": "Add a second task.",
+                        "reference": None,
+                    },
+                    "executors": [],
+                    "tasks": [second],
+                }
+            },
+        }
+        revision, grants, executors, tasks, order, _ = state.reduce_run_event(
+            event,
+            0,
+            set(),
+            [executor],
+            {"first": state.task_state(first, added_revision=0)},
+            ["first"],
+        )
+        self.assertEqual(revision, 1)
+        self.assertEqual(grants, set())
+        self.assertEqual(executors, [executor])
+        self.assertEqual(order, ["first", "second"])
+        self.assertEqual(tasks["second"]["added_revision"], 1)
 
 
 class NoctisRuntimeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.noctis = load_module()
-
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.project = Path(self.temporary.name) / "project"
@@ -36,9 +79,8 @@ class NoctisRuntimeTests(unittest.TestCase):
         self.git("init", "-b", "main")
         self.git("config", "user.email", "noctis@example.test")
         self.git("config", "user.name", "Noctis Test")
-        (self.project / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
         (self.project / "base.txt").write_text("base\n", encoding="utf-8")
-        self.git("add", ".gitignore", "base.txt")
+        self.git("add", "base.txt")
         self.git("commit", "-m", "test: initialize repository")
 
     def tearDown(self) -> None:
@@ -61,440 +103,304 @@ class NoctisRuntimeTests(unittest.TestCase):
         path.write_text(json.dumps(value), encoding="utf-8")
         return path
 
-    def run_cli(self, *arguments: str, cwd: Path | None = None) -> dict[str, object]:
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), *arguments],
-            cwd=cwd or self.project,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return json.loads(result.stdout)
+    @staticmethod
+    def executor(executor_id: str = "local:worker:1") -> dict[str, object]:
+        snapshot = {"protocol": "test.executor/v1", "name": executor_id}
+        return {
+            "id": executor_id,
+            "kind": "test",
+            "snapshot": snapshot,
+            "digest": contracts.canonical_digest(snapshot),
+        }
 
+    @staticmethod
     def task(
-        self,
         task_id: str,
-        provider: str,
-        capability: str,
         *,
         needs: list[str] | None = None,
-        effects: list[str] | None = None,
+        executor: str = "local:worker:1",
+        requirements: list[str] | None = None,
     ) -> dict[str, object]:
         return {
             "id": task_id,
-            "provider": provider,
-            "capability": capability,
-            "workspace": "main",
             "needs": needs or [],
-            "instructions": f"Execute {task_id}.",
-            "inputs": [],
-            "acceptance": [f"{task_id} has observable evidence"],
-            "effects": effects or [],
+            "executor": executor,
+            "request": {"operation": task_id, "payload": {"value": task_id}},
+            "requirements": requirements or [],
         }
 
     def plan(self, tasks: list[dict[str, object]]) -> dict[str, object]:
         return {
-            "schema": "ars.plan/v1",
-            "title": "Test run",
-            "objective": "Exercise the public runtime contract.",
-            "workspaces": [{"id": "main", "root": "."}],
+            "schema": "noctis.plan/v1",
+            "title": "Protocol-neutral test",
+            "objective": "Exercise durable task graph behavior.",
+            "executors": [self.executor()],
             "tasks": tasks,
         }
 
-    def result(
-        self,
-        claim: dict[str, object],
-        *,
-        status: str = "completed",
-        effects: list[dict[str, str]] | None = None,
-        locator: dict[str, object] | None = None,
+    @staticmethod
+    def extension(
+        tasks: list[dict[str, object]],
+        executors: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
-        artifact = {
-            "id": "result",
-            "type": "test.result",
-            "media_type": "application/json",
-            "locator": locator or {"kind": "inline", "value": {"ok": True}},
-            "digest": None,
-        }
         return {
-            "schema": "ars.result/v1",
+            "schema": "noctis.extension/v1",
+            "origin": {
+                "kind": "user-request",
+                "summary": "Add work discovered during execution.",
+                "reference": None,
+            },
+            "executors": executors or [],
+            "tasks": tasks,
+        }
+
+    @staticmethod
+    def result(claim: dict[str, object], output: object) -> dict[str, object]:
+        return {
+            "schema": "noctis.result/v1",
             "run_id": claim["run_id"],
             "task_id": claim["task_id"],
             "claim_id": claim["claim_id"],
             "attempt": claim["attempt"],
-            "status": status,
-            "summary": "Task produced verified output.",
-            "artifacts": [artifact] if status == "completed" else [],
-            "evidence": [],
-            "effects": effects or [],
+            "status": "completed",
+            "summary": "Executor returned an opaque value.",
+            "output": output,
         }
 
-    def create(self, plan: dict[str, object], grants: list[str] | None = None) -> str:
-        plan_path = self.write_json("plan.json", plan)
+    def create(
+        self, tasks: list[dict[str, object]], grants: list[str] | None = None
+    ) -> str:
+        plan_path = self.write_json("plan.json", self.plan(tasks))
         supplied = grants or []
-        created = self.noctis.create_run(
+        created = runtime.create_run(
             self.project,
             plan_path,
-            [SKILLS_ROOT],
             supplied,
             "test authorization" if supplied else None,
-            bool(set(supplied) & self.noctis.HIGH_RISK_EFFECTS),
         )
-        return created["run_id"]
+        return str(created["run_id"])
 
     def checkpoint(self, message: str = "test: checkpoint Noctis state") -> str:
-        self.git("add", ".ars/runs")
+        self.git("add", ".noctis/runs")
         self.git("commit", "-m", message)
         return self.git("rev-parse", "HEAD")
 
-    def commit_implementation(self) -> str:
-        (self.project / "implementation.txt").write_text("implemented\n", encoding="utf-8")
-        self.git("add", "implementation.txt")
-        self.git("commit", "-m", "test: implement change")
-        return self.git("rev-parse", "HEAD")
-
-    def commit_effects(self, claim: dict[str, object], commit: str) -> list[dict[str, str]]:
-        return [
-            {
-                "type": "workspace.write",
-                "target": "main",
-                "receipt": "implementation.txt",
-                "idempotency_key": str(claim["idempotency_key"]),
-            },
-            {
-                "type": "git.commit",
-                "target": "main",
-                "receipt": commit,
-                "idempotency_key": str(claim["idempotency_key"]),
-            },
-        ]
-
-    def test_catalog_discovers_only_explicit_manifests(self) -> None:
-        catalog = self.noctis.discover([SKILLS_ROOT])
-        self.assertEqual(
-            {provider["id"] for provider in catalog["providers"]},
-            {"ars", "implement", "code-review", "verify"},
-        )
-
-    def test_cli_runs_a_complete_single_task_lifecycle(self) -> None:
-        plan_path = self.write_json(
-            "plan.json",
-            self.plan([self.task("review", "code-review", "code.review")]),
-        )
-        created = self.run_cli(
-            "run-create",
-            "--project",
-            str(self.project),
-            "--plan",
-            str(plan_path),
-            "--skills-root",
-            str(SKILLS_ROOT),
-        )
-        self.checkpoint()
-        claim = self.run_cli(
-            "task-claim",
-            "--project",
-            str(self.project),
-            "--run-id",
-            str(created["run_id"]),
-        )
-        result_path = self.write_json("result.json", self.result(claim))
-        finished = self.run_cli(
-            "task-finish",
-            "--project",
-            str(self.project),
-            "--run-id",
-            str(created["run_id"]),
-            "--task-id",
-            str(claim["task_id"]),
-            "--claim-id",
-            str(claim["claim_id"]),
-            "--expected-revision",
-            str(claim["revision"]),
-            "--result",
-            str(result_path),
-        )
-        self.assertEqual(finished["run_status"], "completed")
-        self.assertFalse(finished["checkpoint"]["committed"])
-        self.checkpoint()
-        self.assertTrue(self.noctis.show_run(self.project, str(created["run_id"]))["checkpoint"]["committed"])
-
-    def test_duplicate_provider_ids_are_rejected_instead_of_using_path_order(self) -> None:
-        root = Path(self.temporary.name) / "skills"
-        for name in ("one", "two"):
-            directory = root / name
-            directory.mkdir(parents=True)
-            (directory / "ars.json").write_text(
-                (SKILLS_ROOT / "implement" / "ars.json").read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
-        with self.assertRaisesRegex(self.noctis.NoctisError, "ambiguous"):
-            self.noctis.discover([root])
-
-    def test_recover_discards_local_claim_and_authorization(self) -> None:
-        run_id = self.create(
-            self.plan([self.task("review", "code-review", "code.review")])
-        )
-        self.checkpoint()
-        self.noctis.claim_task(self.project, run_id, "review")
-        self.assertEqual(self.noctis.show_run(self.project, run_id)["status"], "working")
-        recovered = self.noctis.recover(self.project, run_id)
-        self.assertEqual(recovered["runs"][0]["ready"], ["review"])
-        self.assertEqual(recovered["active_grants"], [])
-        cache = Path(self.noctis.cache_path(self.project))
-        self.assertTrue(cache.is_file())
-        git_directory = Path(self.git("rev-parse", "--absolute-git-dir")).resolve()
-        self.assertEqual(cache.parent.parent, git_directory)
-
-    def test_claim_requires_checkpoint_and_invalid_recovery_preserves_local_claim(self) -> None:
-        run_id = self.create(
-            self.plan([self.task("review", "code-review", "code.review")])
-        )
-        with self.assertRaisesRegex(self.noctis.NoctisError, "not committed"):
-            self.noctis.claim_task(self.project, run_id, "review")
-        self.checkpoint()
-        claim = self.noctis.claim_task(self.project, run_id, "review")
-        event_id = "00000000-0000-4000-8000-000000000001"
-        event_path = (
-            self.project / ".ars" / "runs" / run_id / "events" / f"{event_id}.json"
-        )
-        event_path.parent.mkdir(parents=True)
-        event_path.write_text('{"schema":"broken"}\n', encoding="utf-8")
-        with self.assertRaises(self.noctis.NoctisError):
-            self.noctis.recover(self.project, run_id)
-        retained = self.noctis.local_claim(self.project, run_id, "review")
-        self.assertIsNotNone(retained)
-        self.assertEqual(retained["claim_id"], claim["claim_id"])
-
-    def test_replay_rejects_two_events_for_the_same_task_revision(self) -> None:
-        run_id = self.create(
-            self.plan([self.task("review", "code-review", "code.review")])
-        )
-        self.checkpoint()
-        for reason in ("first", "second"):
-            event = self.noctis.new_event(
-                run_id,
-                "review",
-                "task.canceled",
-                0,
-                {
-                    "attempt": 0,
-                    "reason": reason,
-                    "acknowledged_effects": False,
-                    "cascade_from": None,
-                },
-            )
-            self.noctis.append_event(self.project, event)
-        with self.assertRaisesRegex(self.noctis.NoctisError, "conflicts at revision"):
-            self.noctis.show_run(self.project, run_id)
-
-    def test_plan_rejects_cycles_workspace_escape_and_uncommitted_writes(self) -> None:
-        catalog = self.noctis.discover([SKILLS_ROOT])
-        cyclic = self.plan(
-            [
-                self.task("one", "code-review", "code.review", needs=["two"]),
-                self.task("two", "code-review", "code.review", needs=["one"]),
-            ]
-        )
-        with self.assertRaisesRegex(self.noctis.NoctisError, "cycle"):
-            self.noctis.validate_plan(cyclic, self.project, catalog)
-        escaped = self.plan([self.task("one", "code-review", "code.review")])
-        escaped["workspaces"] = [{"id": "main", "root": "../outside"}]
-        with self.assertRaisesRegex(self.noctis.NoctisError, "must not contain"):
-            self.noctis.validate_plan(escaped, self.project, catalog)
-        uncommitted = self.plan(
-            [
-                self.task(
-                    "change",
-                    "implement",
-                    "code.change",
-                    effects=["workspace.write"],
-                )
-            ]
-        )
-        with self.assertRaisesRegex(self.noctis.NoctisError, "git.commit"):
-            self.noctis.validate_plan(uncommitted, self.project, catalog)
-
-    def test_clone_recovers_completed_implementation_and_claims_review(self) -> None:
-        plan = self.plan(
-            [
-                self.task(
-                    "change",
-                    "implement",
-                    "code.change",
-                    effects=["git.commit", "workspace.write"],
-                ),
-                self.task("review", "code-review", "code.review", needs=["change"]),
-            ]
-        )
-        run_id = self.create(plan, ["git.commit", "workspace.write"])
-        self.checkpoint()
-        first = self.noctis.claim_task(self.project, run_id, "change")
-        output_commit = self.commit_implementation()
-        result_path = self.write_json(
-            "change-result.json",
-            self.result(
-                first,
-                effects=self.commit_effects(first, output_commit),
-                locator={"kind": "git", "workspace": "main", "commit": output_commit},
-            ),
-        )
-        dirty = self.project / "not-committed.txt"
-        dirty.write_text("must not cross the checkpoint\n", encoding="utf-8")
-        with self.assertRaisesRegex(self.noctis.NoctisError, "uncommitted content"):
-            self.noctis.finish_task(
-                self.project,
-                run_id,
-                "change",
-                str(first["claim_id"]),
-                int(first["revision"]),
-                result_path,
-            )
-        dirty.unlink()
-        finished = self.noctis.finish_task(
+    def finish(self, run_id: str, claim: dict[str, object], output: object) -> dict[str, object]:
+        path = self.write_json(f"{claim['task_id']}-result.json", self.result(claim, output))
+        return runtime.finish_task(
             self.project,
             run_id,
-            "change",
-            str(first["claim_id"]),
-            int(first["revision"]),
-            result_path,
+            str(claim["task_id"]),
+            str(claim["claim_id"]),
+            int(claim["revision"]),
+            path,
         )
-        self.assertEqual(finished["ready"], ["review"])
+
+    def test_contract_rejects_cycles_unknown_executors_and_bad_digests(self) -> None:
+        cyclic = self.plan(
+            [self.task("one", needs=["two"]), self.task("two", needs=["one"])]
+        )
+        with self.assertRaisesRegex(contracts.NoctisError, "cycle"):
+            contracts.validate_plan(cyclic)
+
+        unknown = self.plan([self.task("one", executor="missing:worker:1")])
+        with self.assertRaisesRegex(contracts.NoctisError, "unknown executor"):
+            contracts.validate_plan(unknown)
+
+        bad_digest = self.plan([self.task("one")])
+        bad_digest["executors"][0]["digest"] = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(contracts.NoctisError, "does not match"):
+            contracts.validate_plan(bad_digest)
+
+    def test_cli_completes_a_task_with_opaque_output(self) -> None:
+        plan_path = self.write_json("cli-plan.json", self.plan([self.task("first")]))
+        created = subprocess.run(
+            [sys.executable, str(SCRIPT), "run-create", "--project", str(self.project), "--plan", str(plan_path)],
+            cwd=self.project,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        run_id = json.loads(created.stdout)["run_id"]
+        self.checkpoint()
+        claim = runtime.claim_task(self.project, run_id, "first")
+        finished = self.finish(run_id, claim, {"any": ["strict", "json"]})
+        self.assertEqual(finished["run_status"], "completed")
+        self.checkpoint()
+        task = runtime.show_run(self.project, run_id)["tasks"][0]
+        self.assertEqual(task["result"]["output"], {"any": ["strict", "json"]})
+
+    def test_completed_run_accepts_dynamic_task_and_passes_dependency_result(self) -> None:
+        run_id = self.create([self.task("first")])
+        self.checkpoint()
+        first = runtime.claim_task(self.project, run_id, "first")
+        self.finish(run_id, first, {"value": 1})
+        self.checkpoint()
+        self.assertEqual(runtime.show_run(self.project, run_id)["status"], "completed")
+
+        added = runtime.extend_run_value(
+            self.project,
+            run_id,
+            self.extension([self.task("second", needs=["first"])]),
+            0,
+        )
+        self.assertEqual(added["status"], "submitted")
+        self.assertEqual(added["tasks_added"], ["second"])
+        self.checkpoint()
+        second = runtime.claim_task(self.project, run_id, "second")
+        self.assertEqual(second["dependencies"][0]["result"]["output"], {"value": 1})
+
+    def test_extension_can_add_executor_and_requirements_with_revision_control(self) -> None:
+        run_id = self.create([self.task("first")])
+        self.checkpoint()
+        added_executor = self.executor("remote:worker:2")
+        extension = self.extension(
+            [
+                self.task(
+                    "remote-task",
+                    executor="remote:worker:2",
+                    requirements=["network.write"],
+                )
+            ],
+            [added_executor],
+        )
+        added = runtime.extend_run_value(self.project, run_id, extension, 0)
+        self.assertEqual(added["executors_added"], ["remote:worker:2"])
+        self.assertEqual(added["missing_grants"], ["network.write"])
+        self.checkpoint()
+        with self.assertRaisesRegex(contracts.NoctisError, "Run revision conflict"):
+            runtime.extend_run_value(
+                self.project,
+                run_id,
+                self.extension([self.task("stale-task")]),
+                0,
+            )
+        with self.assertRaisesRegex(contracts.NoctisError, "recorded grants"):
+            runtime.claim_task(self.project, run_id, "remote-task")
+        runtime.grant_requirements(
+            self.project, run_id, ["network.write"], "User authorized remote execution."
+        )
+        self.checkpoint()
+        self.assertEqual(
+            runtime.claim_task(self.project, run_id, "remote-task")["executor"]["id"],
+            "remote:worker:2",
+        )
+
+    def test_recover_discards_local_claims_and_machine_authorization(self) -> None:
+        run_id = self.create([self.task("first", requirements=["secret.read"])], ["secret.read"])
+        self.checkpoint()
+        runtime.claim_task(self.project, run_id, "first")
+        self.assertEqual(runtime.show_run(self.project, run_id)["status"], "working")
+        recovered = runtime.recover(self.project, run_id)
+        self.assertEqual(recovered["runs"][0]["ready"], ["first"])
+        self.assertEqual(recovered["active_grants"], [])
+        with self.assertRaisesRegex(contracts.NoctisError, "current-machine authorization"):
+            runtime.claim_task(self.project, run_id, "first")
+
+    def test_base_plan_is_sealed_by_its_first_checkpoint(self) -> None:
+        run_id = self.create([self.task("first")])
+        self.checkpoint()
+        plan_path = self.project / ".noctis" / "runs" / run_id / "plan.json"
+        mutated = json.loads(plan_path.read_text(encoding="utf-8"))
+        mutated["objective"] = "Silently replace the approved objective."
+        plan_path.write_text(json.dumps(mutated), encoding="utf-8")
+        with self.assertRaisesRegex(contracts.NoctisError, "sealed"):
+            runtime.show_run(self.project, run_id)
+
+    def test_replay_rejects_conflicting_task_revisions(self) -> None:
+        run_id = self.create([self.task("first")])
+        self.checkpoint()
+        for reason in ("first cancellation", "second cancellation"):
+            runtime.append_event(
+                self.project,
+                runtime.new_event(
+                    run_id,
+                    "first",
+                    "task.canceled",
+                    0,
+                    {
+                        "attempt": 0,
+                        "reason": reason,
+                        "acknowledged_requirements": False,
+                        "cascade_from": None,
+                    },
+                ),
+            )
+        with self.assertRaisesRegex(contracts.NoctisError, "conflicts at revision"):
+            runtime.show_run(self.project, run_id)
+
+    def test_replay_binds_result_claim_id_to_its_event(self) -> None:
+        run_id = self.create([self.task("first")])
+        self.checkpoint()
+        claim = runtime.claim_task(self.project, run_id, "first")
+        self.finish(run_id, claim, {"value": 1})
+        result_path = (
+            self.project
+            / ".noctis"
+            / "runs"
+            / run_id
+            / "results"
+            / "first"
+            / "attempt-1.json"
+        )
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        result["claim_id"] = "00000000-0000-4000-8000-000000000001"
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        with self.assertRaisesRegex(contracts.NoctisError, "claim_id/attempt is stale"):
+            runtime.show_run(self.project, run_id)
+
+    def test_retry_requires_requirement_reconciliation_and_increments_attempt(self) -> None:
+        run_id = self.create(
+            [self.task("first", requirements=["command.execute"])],
+            ["command.execute"],
+        )
+        self.checkpoint()
+        runtime.claim_task(self.project, run_id, "first")
+        with self.assertRaisesRegex(contracts.NoctisError, "acknowledge-requirements"):
+            runtime.retry_task(self.project, run_id, "first", 0, "retry", False)
+        retried = runtime.retry_task(
+            self.project, run_id, "first", 0, "execution reconciled", True
+        )
+        self.assertEqual(retried["status"], "pending")
+        self.checkpoint()
+        self.assertEqual(runtime.claim_task(self.project, run_id, "first")["attempt"], 2)
+
+    def test_cancel_cascades_to_pending_descendants(self) -> None:
+        run_id = self.create(
+            [
+                self.task("one"),
+                self.task("two", needs=["one"]),
+                self.task("three", needs=["two"]),
+            ]
+        )
+        self.checkpoint()
+        canceled = runtime.cancel_task(
+            self.project, run_id, "one", 0, "User canceled the workflow.", False
+        )
+        self.assertEqual(canceled["canceled"], ["one", "two", "three"])
+        self.assertEqual(runtime.show_run(self.project, run_id)["status"], "canceled")
+
+    def test_clone_recovers_dynamic_tasks_and_completed_results(self) -> None:
+        run_id = self.create([self.task("first")])
+        self.checkpoint()
+        claim = runtime.claim_task(self.project, run_id, "first")
+        self.finish(run_id, claim, {"receipt": "one"})
+        self.checkpoint()
+        runtime.extend_run_value(
+            self.project,
+            run_id,
+            self.extension([self.task("second", needs=["first"])]),
+            0,
+        )
         self.checkpoint()
 
         clone = Path(self.temporary.name) / "clone"
         self.git("clone", str(self.project), str(clone), cwd=Path(self.temporary.name))
-        recovered = self.run_cli(
-            "recover", "--project", str(clone), "--run-id", run_id, cwd=clone
-        )
-        self.assertEqual(recovered["runs"][0]["ready"], ["review"])
-        view = self.run_cli(
-            "run-show", "--project", str(clone), "--run-id", run_id, cwd=clone
-        )
-        by_id = {task["id"]: task for task in view["tasks"]}
-        self.assertEqual(by_id["change"]["status"], "completed")
-        self.assertEqual(by_id["review"]["status"], "pending")
-        review = self.run_cli(
-            "task-claim",
-            "--project",
-            str(clone),
-            "--run-id",
-            run_id,
-            "--task-id",
-            "review",
-            cwd=clone,
-        )
-        self.assertEqual(review["checkpoint"]["commit"], self.git("rev-parse", "HEAD", cwd=clone))
-        self.assertEqual(review["inputs"][0]["artifact"]["locator"]["commit"], output_commit)
-
-    def test_claim_requires_recorded_and_current_machine_grants(self) -> None:
-        plan = self.plan(
-            [
-                self.task(
-                    "change",
-                    "implement",
-                    "code.change",
-                    effects=["git.commit", "workspace.write"],
-                )
-            ]
-        )
-        run_id = self.create(plan)
-        self.checkpoint()
-        with self.assertRaisesRegex(self.noctis.NoctisError, "recorded grants"):
-            self.noctis.claim_task(self.project, run_id, "change")
-        with self.assertRaisesRegex(self.noctis.NoctisError, "exceed"):
-            self.noctis.grant_effects(
-                self.project, run_id, ["network.write"], "not requested", True
-            )
-        self.noctis.grant_effects(
-            self.project,
-            run_id,
-            ["git.commit", "workspace.write"],
-            "user requested the edit",
-            True,
-        )
-        self.checkpoint()
-        self.noctis.recover(self.project, run_id)
-        with self.assertRaisesRegex(self.noctis.NoctisError, "current-machine authorization"):
-            self.noctis.claim_task(self.project, run_id, "change")
-        reauthorized = self.noctis.grant_effects(
-            self.project,
-            run_id,
-            ["git.commit", "workspace.write"],
-            "user reauthorized this clone",
-            True,
-        )
-        self.assertEqual(reauthorized["checkpoint_required"], [])
-        self.assertEqual(self.noctis.claim_task(self.project, run_id, "change")["task_id"], "change")
-
-    def test_working_task_retry_requires_reconciliation_acknowledgement(self) -> None:
-        plan = self.plan(
-            [
-                self.task(
-                    "change",
-                    "implement",
-                    "code.change",
-                    effects=["git.commit", "workspace.write"],
-                )
-            ]
-        )
-        run_id = self.create(plan, ["git.commit", "workspace.write"])
-        self.checkpoint()
-        claim = self.noctis.claim_task(self.project, run_id, "change")
-        with self.assertRaisesRegex(self.noctis.NoctisError, "revision conflict"):
-            self.noctis.retry_task(self.project, run_id, "change", 1, "stale", True)
-        with self.assertRaisesRegex(self.noctis.NoctisError, "acknowledge-effects"):
-            self.noctis.retry_task(self.project, run_id, "change", 0, "recover", False)
-        retried = self.noctis.retry_task(
-            self.project, run_id, "change", 0, "reconciled", True
-        )
-        self.assertEqual(retried["status"], "pending")
-        self.checkpoint()
-        second = self.noctis.claim_task(self.project, run_id, "change")
-        self.assertEqual(second["attempt"], 2)
-        with self.assertRaisesRegex(self.noctis.NoctisError, "does not undo"):
-            self.noctis.cancel_task(
-                self.project, run_id, "change", 1, "stop", False
-            )
-
-    def test_result_rejects_unreachable_git_evidence(self) -> None:
-        run_id = self.create(
-            self.plan([self.task("review", "code-review", "code.review")])
-        )
-        self.checkpoint()
-        claim = self.noctis.claim_task(self.project, run_id, "review")
-        invalid = self.result(
-            claim,
-            locator={"kind": "git", "workspace": "main", "commit": "0" * 40},
-        )
-        path = self.write_json("invalid-result.json", invalid)
-        with self.assertRaisesRegex(self.noctis.NoctisError, "not reachable"):
-            self.noctis.finish_task(
-                self.project,
-                run_id,
-                "review",
-                str(claim["claim_id"]),
-                int(claim["revision"]),
-                path,
-            )
-
-    def test_cancel_cascades_to_pending_descendants(self) -> None:
-        run_id = self.create(
-            self.plan(
-                [
-                    self.task("one", "code-review", "code.review"),
-                    self.task("two", "code-review", "code.review", needs=["one"]),
-                    self.task("three", "code-review", "code.review", needs=["two"]),
-                ]
-            )
-        )
-        self.checkpoint()
-        canceled = self.noctis.cancel_task(
-            self.project, run_id, "one", 0, "user canceled the workflow", False
-        )
-        self.assertEqual(canceled["canceled"], ["one", "two", "three"])
-        self.assertEqual(self.noctis.show_run(self.project, run_id)["status"], "canceled")
+        recovered = runtime.recover(clone, run_id)
+        self.assertEqual(recovered["runs"][0]["ready"], ["second"])
+        claim = runtime.claim_task(clone, run_id, "second")
+        self.assertEqual(claim["dependencies"][0]["result"]["output"], {"receipt": "one"})
 
 
 if __name__ == "__main__":

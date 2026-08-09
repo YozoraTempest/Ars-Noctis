@@ -1,46 +1,38 @@
 {
-  "schema": "ars.plan/v1",
-  "title": "Implement and review a repository change",
-  "objective": "Complete one scoped change and independently review the result.",
-  "workspaces": [
+  "schema": "noctis.plan/v1",
+  "title": "Transform and inspect a durable artifact",
+  "objective": "Run two protocol-neutral tasks with an explicit dependency.",
+  "executors": [
     {
-      "id": "main",
-      "root": "."
+      "id": "example:worker:1-0-0",
+      "kind": "external",
+      "snapshot": {
+        "name": "example-worker",
+        "version": "1.0.0"
+      },
+      "digest": null
     }
   ],
   "tasks": [
     {
-      "id": "implement-change",
-      "provider": "implement",
-      "capability": "code.change",
-      "workspace": "main",
+      "id": "transform-input",
       "needs": [],
-      "instructions": "Implement the confirmed repository change.",
-      "inputs": [],
-      "acceptance": [
-        "The requested behavior is implemented",
-        "Relevant local checks pass"
-      ],
-      "effects": [
-        "command.execute",
-        "git.commit",
-        "workspace.write"
-      ]
+      "executor": "example:worker:1-0-0",
+      "request": {
+        "operation": "transform"
+      },
+      "requirements": []
     },
     {
-      "id": "review-change",
-      "provider": "code-review",
-      "capability": "code.review",
-      "workspace": "main",
+      "id": "inspect-output",
       "needs": [
-        "implement-change"
+        "transform-input"
       ],
-      "instructions": "Review the implementation artifact from the preceding task.",
-      "inputs": [],
-      "acceptance": [
-        "Every finding contains actionable evidence"
-      ],
-      "effects": []
+      "executor": "example:worker:1-0-0",
+      "request": {
+        "operation": "inspect"
+      },
+      "requirements": []
     }
   ]
 }

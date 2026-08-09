@@ -1,4 +1,4 @@
 interface:
   display_name: "Noctis"
-  short_description: "规划、执行并从 Git 检查点恢复多 Skill 持久工作流"
-  default_prompt: "使用 $noctis 规划并从 Git 检查点继续这个多 Skill 工作流。"
+  short_description: "创建、动态扩展并从 Git 恢复持久 Task DAG"
+  default_prompt: "使用 $noctis 创建或继续这个持久任务图，并在运行中按需追加新 Task。"

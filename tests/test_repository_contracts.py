@@ -21,8 +21,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertEqual(actual, EXPECTED)
         for name in EXPECTED:
             with self.subTest(skill=name):
-                root = SKILLS / name
-                self.assertTrue((root / "agents" / "openai.yaml").is_file())
+                self.assertTrue((SKILLS / name / "agents" / "openai.yaml").is_file())
         self.assertFalse((SKILLS / "noctis" / "ars.json").exists())
 
     def test_every_manifest_validates_through_public_cli(self) -> None:
@@ -52,10 +51,63 @@ class RepositoryContractTests(unittest.TestCase):
                     self.assertEqual(capability["accepts"], "ars.task/v1")
                     self.assertEqual(capability["returns"], "ars.result/v1")
 
-    def test_no_legacy_manifest_or_split_noctis_entrypoint_remains(self) -> None:
-        self.assertFalse(any(SKILLS.glob("*/ars.yaml")))
-        for retired in ("to-ars", "noctis-exec", "noctis-continue"):
-            self.assertFalse((SKILLS / retired / "SKILL.md").exists())
+    def test_noctis_core_has_no_ars_or_provider_dependency(self) -> None:
+        scripts = SKILLS / "noctis" / "scripts"
+        sources = "\n".join(
+            path.read_text(encoding="utf-8") for path in sorted(scripts.rglob("*.py"))
+        ).lower()
+        for forbidden in ("ars.json", "ars.skill/", "ars.task/", "ars.result/", "ars.plan/"):
+            self.assertNotIn(forbidden, sources)
+        self.assertNotIn("from ars", sources)
+        self.assertNotIn("import ars", sources)
+        self.assertTrue((scripts / "noctislib" / "contracts.py").is_file())
+        self.assertTrue((scripts / "noctislib" / "state.py").is_file())
+        self.assertTrue((scripts / "noctislib" / "runtime.py").is_file())
+        self.assertFalse((scripts / "noctis_runtime.py").exists())
+
+    def test_ars_adapter_uses_public_json_not_noctis_internals(self) -> None:
+        adapter = (SKILLS / "ars" / "scripts" / "ars_noctis.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("noctislib", adapter)
+        self.assertNotIn("skills/noctis", adapter.replace("\\", "/"))
+        self.assertIn("noctis.plan/v1", adapter)
+        self.assertIn("noctis.extension/v1", adapter)
+
+    def test_noctis_owns_generic_git_state_and_dynamic_extension(self) -> None:
+        instructions = (SKILLS / "noctis" / "SKILL.md").read_text(encoding="utf-8")
+        contracts = (SKILLS / "noctis" / "references" / "contracts.md").read_text(
+            encoding="utf-8"
+        )
+        operations = (SKILLS / "noctis" / "references" / "operations.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(".noctis/runs/<run-id>/", instructions)
+        self.assertIn("noctis.extension/v1", contracts)
+        self.assertIn("expected-run-revision", operations)
+        self.assertIn("noctis/cache.sqlite3", operations)
+        self.assertNotIn(".ars/runs/<run-id>/", instructions)
+
+    def test_example_assets_keep_adapter_and_core_schemas_separate(self) -> None:
+        core_plan = json.loads(
+            (SKILLS / "noctis" / "assets" / "plan.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        core_extension = json.loads(
+            (SKILLS / "noctis" / "assets" / "extension.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        ars_plan = json.loads(
+            (SKILLS / "ars" / "assets" / "noctis-plan.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(core_plan["schema"], "noctis.plan/v1")
+        self.assertEqual(core_extension["schema"], "noctis.extension/v1")
+        self.assertEqual(ars_plan["schema"], "ars.plan/v1")
+        self.assertTrue(all(item["kind"] != "ars" for item in core_plan["executors"]))
 
     def test_atomic_skills_do_not_own_orchestration_state(self) -> None:
         for name in ("implement", "code-review", "verify"):
@@ -65,24 +117,6 @@ class RepositoryContractTests(unittest.TestCase):
                 self.assertIn("ars.task/v1", instructions)
                 self.assertIn("ars.result/v1", instructions)
                 self.assertFalse(any((root / "scripts").glob("*.py")))
-                self.assertIn("不", instructions)
-
-    def test_noctis_is_the_single_owner_of_runtime_state(self) -> None:
-        instructions = (SKILLS / "noctis" / "SKILL.md").read_text(encoding="utf-8")
-        operations = (SKILLS / "noctis" / "references" / "operations.md").read_text(encoding="utf-8")
-        self.assertIn(".ars/runs/<run-id>/", instructions)
-        self.assertIn("不要手工编辑 `.ars/runs/`", operations)
-        self.assertIn("noctis/cache.sqlite3", operations)
-        self.assertTrue((SKILLS / "noctis" / "scripts" / "noctis.py").is_file())
-        self.assertTrue((SKILLS / "noctis" / "scripts" / "noctis_runtime.py").is_file())
-        self.assertFalse((SKILLS / "noctis" / "ars.json").exists())
-
-    def test_noctis_cache_is_local_and_git_json_is_authoritative(self) -> None:
-        readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn(".ars/runs/<run-id>/", readme)
-        self.assertIn("Git 元数据目录", readme)
-        self.assertIn("追加式 JSON + Git", readme)
-        self.assertNotIn("SQLite Run 与 Task 状态", readme)
 
     def test_openai_metadata_default_prompts_name_the_skill(self) -> None:
         for name in EXPECTED:
@@ -90,9 +124,20 @@ class RepositoryContractTests(unittest.TestCase):
             with self.subTest(skill=name):
                 self.assertIn(f"${name}", content)
 
-    def test_readme_records_framework_choices_and_non_goals(self) -> None:
+    def test_readme_records_dependency_direction_and_non_goals(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        for framework in ("Agent Skills", "MCP", "A2A", "LangGraph", "CrewAI", "OpenAI Agents SDK", "AutoGen"):
+        self.assertIn("Ars -> Noctis public contract", readme)
+        self.assertIn(".noctis/runs/<run-id>/", readme)
+        self.assertIn("追加式 JSON + Git", readme)
+        for framework in (
+            "Agent Skills",
+            "MCP",
+            "A2A",
+            "LangGraph",
+            "CrewAI",
+            "OpenAI Agents SDK",
+            "AutoGen",
+        ):
             self.assertIn(framework, readme)
         self.assertIn("不实现网络传输", readme)
         self.assertIn("Python 3.11+ 标准库", readme)

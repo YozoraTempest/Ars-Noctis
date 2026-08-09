@@ -1,0 +1,46 @@
+{
+  "schema": "ars.plan/v1",
+  "title": "Implement and review a repository change",
+  "objective": "Complete one scoped change and independently review the result.",
+  "workspaces": [
+    {
+      "id": "main",
+      "root": "."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "implement-change",
+      "provider": "implement",
+      "capability": "code.change",
+      "workspace": "main",
+      "needs": [],
+      "instructions": "Implement the confirmed repository change.",
+      "inputs": [],
+      "acceptance": [
+        "The requested behavior is implemented",
+        "Relevant local checks pass"
+      ],
+      "effects": [
+        "command.execute",
+        "git.commit",
+        "workspace.write"
+      ]
+    },
+    {
+      "id": "review-change",
+      "provider": "code-review",
+      "capability": "code.review",
+      "workspace": "main",
+      "needs": [
+        "implement-change"
+      ],
+      "instructions": "Review the implementation output from the preceding task.",
+      "inputs": [],
+      "acceptance": [
+        "Every finding contains actionable evidence"
+      ],
+      "effects": []
+    }
+  ]
+}

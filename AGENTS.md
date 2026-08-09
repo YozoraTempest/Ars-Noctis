@@ -2,13 +2,14 @@
 
 ## 范围与架构
 
-本仓库维护可独立安装的 Agent Skills，以及一个可选的轻量级协作运行时。`SKILL.md` 负责触发和行为；`ars.json` 只负责能力发现；Noctis 只负责 Task DAG、持久状态与 envelope 校验。
+本仓库维护可独立安装的 Agent Skills、Ars 组合协议，以及协议无关的 Noctis 持久任务运行时。`SKILL.md` 负责触发和行为；`ars.json` 只负责 Ars 能力发现；Noctis 只负责通用 Task DAG、持久状态与公共 envelope 校验。
 
 - 单个 Skill 能完成的任务直接调用，不创建 Noctis Run。
 - 每个 `skills/<name>/` 是独立安装单元，不按固定安装路径导入其他 Skill。
-- 多 Skill 组合只通过 `ars.skill/v1`、`ars.task/v1`、`ars.result/v1` 和 Artifact v1。
+- Ars 多 Skill 组合通过 `ars.skill/v1`、`ars.task/v1`、`ars.result/v1` 和 Artifact v1；Ars 通过 adapter 使用 `noctis.*` 公共契约。
 - Noctis 是协作式状态内核，不是 Agent 宿主；不得声称脚本能够自行调用模型或 Skill。
-- Git 跟踪的 `.ars/runs/<run-id>/` 是项目状态的唯一事实源，只通过 Noctis CLI 追加；Git 元数据目录中的 Noctis 本机缓存可删除且不得复制为项目状态。
+- Noctis 不导入 Ars、不扫描 `ars.json`，不得为 implement、code-review、verify 或任何 adapter 增加专用状态或分支。
+- Git 跟踪的 `.noctis/runs/<run-id>/` 是 Noctis 项目状态的唯一事实源，只通过 Noctis CLI 追加；Git 元数据目录中的本机缓存可删除且不得复制为项目状态。
 
 ## 工作原则
 

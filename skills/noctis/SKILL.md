@@ -1,45 +1,52 @@
 ---
 name: noctis
-description: 规划、执行或从 Git clone 恢复需要多个 Agent Skills、依赖图或持久状态的工作流。用户明确提到 Noctis、要求跨会话或跨机器继续未完成 Task，或一个目标确实需要多个独立能力按依赖组合时使用；不要为单一、可在当前会话直接完成的任务自动引入。
+description: 创建、扩展、推进或从 Git clone 恢复协议无关的持久 Task DAG。用户明确提到 Noctis、要求跨会话或跨机器继续、需要有依赖的可恢复任务，或在运行中动态加入新 Task 时使用；不要为当前会话可直接完成的单一任务引入，也不要用它发现或执行特定 Agent Skill 协议。
 ---
 
 # Noctis
 
-把 Noctis 当作协作式状态内核，不当作 Agent 宿主。脚本只发现能力、校验契约和原子推进状态；当前宿主负责加载 provider Skill 并执行 `ars.task/v1`。
+把 Noctis 当作协议无关的持久状态内核，不当作 Agent 宿主。Core 只校验 executor、opaque request/output、requirement、DAG 和状态转换；外部 adapter 负责领域发现、执行与业务证据。
 
 ## 选择入口
 
-- 单个 Skill 可直接完成时，直接调用该 Skill，不创建 Run。
-- 用户要求新建可恢复工作流时，执行“创建 Run”。
-- 用户要求继续、恢复或查看进度时，先执行 `run-show`；新 clone 先执行 `recover`，依据 Git 中的持久事实选择入口，不重建旧对话。
+- 当前会话能直接完成时直接执行，不创建 Run。
+- 新建可恢复工作流时创建 `noctis.plan/v1`。
+- 运行中出现新目标时追加 `noctis.extension/v1`，不改写 Plan 或已有 Task。
+- 查看或继续时先调用 `run-show`；新 clone 或明确丢弃本机现场时调用 `recover`。
 
 ## 创建 Run
 
-1. 用 `scripts/noctis.py catalog --skills-root <目录>` 发现 `ars.json`。不要为发现能力读取 provider 的 `SKILL.md`。
-2. 创建 `ars.plan/v1`，只保留一个 Run 和一个 Task DAG。每个 Task 绑定 provider、capability、workspace、直接依赖、输入 Artifact、验收条件与实际需要的副作用。
-3. 向用户展示目标、Task 图、workspace 范围和待授予副作用。计划或授权会扩大用户请求时先确认。
-4. 用 `plan-check` 校验 DAG、provider 与现有输入，再用 `run-create` 写入 `<project>/.ars/runs/<run-id>/`。只有从用户请求中已有明确授权的副作用才能传给 `--grant`；高风险副作用还必须使用 `--confirm-high-risk`。
-5. 在领取首个 Task 前，把 Run JSON 作为检查点提交并推送到 Run 所在分支。Noctis 不代替宿主提交或推送。
+1. 让调用方或 adapter 提供 executor 快照。Noctis 不扫描 provider，也不读取其他 Skill。
+2. 创建一个 Plan，包含目标、executor 列表和初始 Task DAG。Task 只声明 ID、依赖、executor、opaque request 和 requirement。
+3. 展示目标、依赖图和待授权 requirement；超出当前用户请求的授权先确认。
+4. 用 `plan-check` 校验，再用 `run-create` 写入 `<project>/.noctis/runs/<run-id>/`。
+5. 在领取 Task 前提交 CLI 返回的 JSON checkpoint。Noctis 不自行提交或推送。
 
 ## 推进 Run
 
-1. 确认 Run JSON 和目标 workspace 都没有未提交内容，再调用 `task-claim` 领取 ready Task，并保留返回的本机 Task envelope。
-2. 按 envelope 中精确的 provider ID 加载该 Skill；传递 envelope，不传递旧对话总结或其他 Skill 私有文件。
-3. 要求 provider 返回 `ars.result/v1`。产生 `workspace.write` 时，先在授权范围内提交产物，并在 Result 中同时提供匹配的 Git Artifact 与 `git.commit` receipt。
-4. 确认 workspace 已无未提交内容，再用 `task-finish` 携带 claim ID 和 expected revision 写入不可变 Result 与追加事件；把 CLI 返回的 checkpoint 文件提交并推送后，该完成状态才可跨机器恢复。
-5. 重复领取 ready Task；可以在独立分支并行执行互不依赖的 Task，汇合后再让后继 Task 运行。所有 Task 完成时 Run 自动完成。
+1. 调用 `task-claim` 领取 ready Task。返回的 `noctis.claim/v1` 固定 executor 快照、request、前置 Result、checkpoint 和本机 claim。
+2. 把 Claim 交给对应 executor 或 adapter。不要让 Core 推断 opaque request 的含义。
+3. executor 返回 `noctis.result/v1`；`output` 是严格 JSON，但对 Core 不透明。
+4. 用 claim ID 和 expected Task revision 调用 `task-finish`。提交 Result/Event checkpoint 后，后继 Task 才能跨机器领取。
+5. 重复直到当前所有 Task 进入终态。`working` 仅来自本机 claim，不是持久状态。
 
-Noctis 不直接模拟调用另一个 Agent，也不把工具可用、登录状态或 manifest 的 `effects` 当作授权。它不提交、不推送、不部署业务产物。
+## 动态加入 Task
 
-用户撤回授权时调用 `revoke`，立即清除本机授权并追加持久事件。已经处于本机 `working` 的 Task 不能被脚本抢占；立即停止调用 provider，并按恢复规则核对已经发生的副作用。
+1. 记录来源 `origin.kind`、`origin.summary` 和可选 reference。
+2. 新 executor 不在 Run 中时，在 Extension 中附带不可变快照；已有 executor 只引用其 ID。
+3. 新 Task 可依赖任意未取消的已有或同批新增 Task，但不能替换已有 ID、修改历史或制造环。
+4. 先调用 `extension-check`，再用当前 `run_revision` 调用 `run-extend`。单个 Task 可用 `task-add` 简写。
+5. 提交追加事件。缺少 requirement 时先显式 `grant`，再领取 Task。
 
-## 恢复与异常
+Run 已经 completed 也可追加 Task；追加后状态重新派生为 submitted。`fix`、`verify`、返工或用户临时目标都只是普通 Task，Noctis 不为任何名字或 executor 预置流程。
 
-- Git 中的 Plan、Result 与 Event 是唯一持久事实；Git 元数据目录中的 Noctis SQLite 只保存本机 claim 和当前机器授权，不提交。
-- 新 clone 调用 `recover` 重建空缓存。没有持久 Result 的旧 claim 不恢复，对应 Task 按最后提交状态重新成为 `pending`；高风险授权也不从旧记录自动激活。
-- `run-show` 列出 ready、本机 working 和终态 Task，并报告 checkpoint 是否已提交、是否已知推送。
-- 先检查当前 workspace、Artifact、提交或外部系统证据；能够证明原执行完成时提交对应 Result。
-- 只有确认需要重试时才调用 `task-retry`。可能已有副作用时必须显式传入 `--acknowledge-effects`，并让 provider 使用 Task 的稳定 `idempotency_key`。
-- 缺少用户输入返回 `input-required`；缺少依赖、工具或权限返回 `blocked`；确定性执行错误返回 `failed`。取消使用 `task-cancel`，不删除历史事件。
+## 恢复与控制
 
-编写 Plan、Task、Result 或 Artifact 时读取 [references/contracts.md](references/contracts.md)。执行命令或处理恢复时读取 [references/operations.md](references/operations.md)。
+- Git 中的 Plan、Result 与 Event 是唯一持久事实；Git 元数据目录中的 SQLite 只保存本机 claim 和当前机器授权。
+- `recover` 清空所有本机 claim 与活动授权，再严格重放 JSON。记录过的授权不会在新机器自动激活。
+- `grant` 和 `revoke` 管理任意 requirement 标识；Core 不把 requirement 解释成权限、副作用或工具。
+- `failed`、`blocked`、`input-required` 可在对账后 `task-retry`；`completed` 和 `canceled` 不可重开。
+- 重试或取消可能已使用 requirement 的本机 claim 时，显式传入 `--acknowledge-requirements`。这只是对账确认，不会撤销外部行为。
+- 不手工编辑 `.noctis/runs/`，不把缓存复制为项目状态，不用旧聊天或外部文件替代 Result/Event。
+
+创建 JSON 时读取 [references/contracts.md](references/contracts.md)。执行命令、扩展或恢复时读取 [references/operations.md](references/operations.md)。

@@ -1,0 +1,22 @@
+{
+  "schema": "noctis.extension/v1",
+  "origin": {
+    "kind": "user",
+    "summary": "Add an independent verification task.",
+    "reference": null
+  },
+  "executors": [],
+  "tasks": [
+    {
+      "id": "verify-output",
+      "needs": [
+        "transform-input"
+      ],
+      "executor": "example:worker:1-0-0",
+      "request": {
+        "operation": "verify"
+      },
+      "requirements": []
+    }
+  ]
+}

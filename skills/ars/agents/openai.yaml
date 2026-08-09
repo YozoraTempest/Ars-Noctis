@@ -1,4 +1,4 @@
 interface:
   display_name: "Ars"
-  short_description: "创建、迁移并验证可被轻量工作流发现和组合的 Agent Skill 能力清单"
-  default_prompt: "使用 $ars 为这个 Agent Skill 创建并验证轻量级 Ars manifest。"
+  short_description: "维护 Ars 能力契约并适配协议无关的 Noctis"
+  default_prompt: "使用 $ars 创建或验证能力清单，并在需要时把 Ars 工作适配到 Noctis。"
