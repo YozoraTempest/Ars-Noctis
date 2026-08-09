@@ -42,7 +42,7 @@ Run 已经 completed 也可追加 Task；追加后状态重新派生为 submitte
 
 ## 恢复与控制
 
-- Git 中的 Plan、Result 与 Event 是唯一持久事实；Git 元数据目录中的 SQLite 只保存本机 claim 和当前机器授权。
+- Git 中的 Plan、Result 与 Event 是唯一持久事实；Git 元数据目录中的 SQLite 只保存同一 worktree 的 mutation mutex、本机 claim 和当前机器授权。
 - `recover` 清空所有本机 claim 与活动授权，再严格重放 JSON。记录过的授权不会在新机器自动激活。
 - `grant` 和 `revoke` 管理任意 requirement 标识；Core 不把 requirement 解释成权限、副作用或工具。
 - `failed`、`blocked`、`input-required` 可在对账后 `task-retry`；`completed` 和 `canceled` 不可重开。

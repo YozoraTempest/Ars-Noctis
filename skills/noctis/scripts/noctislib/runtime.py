@@ -7,9 +7,10 @@ import sqlite3
 import subprocess
 import sys
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .contracts import (
     NoctisError,
@@ -200,18 +201,43 @@ def cache_connect(project: Path, *, create: bool) -> sqlite3.Connection | None:
         actual = current["value"]
         connection.close()
         raise NoctisError(
-            f"unsupported local cache schema {actual}; run recover to rebuild it"
+            f"unsupported local cache schema {actual}; remove the local cache while no Noctis command is running"
         )
     return connection
 
 
-def rebuild_cache(project: Path) -> None:
-    path = cache_path(project)
-    if path.exists():
-        path.unlink()
-    connection = cache_connect(project, create=True)
-    if connection is not None:
+@contextmanager
+def mutation_transaction(project: Path) -> Iterator[sqlite3.Connection]:
+    try:
+        connection = cache_connect(project, create=True)
+    except sqlite3.OperationalError as error:
+        if "locked" in str(error).lower():
+            raise NoctisError("another Noctis mutation is still in progress") from error
+        raise
+    if connection is None:
+        raise NoctisError("unable to create local cache")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        yield connection
+        connection.commit()
+    except sqlite3.OperationalError as error:
+        connection.rollback()
+        if "locked" in str(error).lower():
+            raise NoctisError("another Noctis mutation is still in progress") from error
+        raise
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
         connection.close()
+def _active_grants(connection: sqlite3.Connection, run_id: str) -> list[str]:
+    return [
+        row["requirement"]
+        for row in connection.execute(
+            "SELECT requirement FROM authorizations WHERE run_id = ? ORDER BY requirement",
+            (run_id,),
+        )
+    ]
 
 
 def active_grants(project: Path, run_id: str) -> list[str]:
@@ -219,44 +245,50 @@ def active_grants(project: Path, run_id: str) -> list[str]:
     if connection is None:
         return []
     try:
-        return [
-            row["requirement"]
-            for row in connection.execute(
-                "SELECT requirement FROM authorizations WHERE run_id = ? ORDER BY requirement",
-                (run_id,),
-            )
-        ]
+        return _active_grants(connection, run_id)
     finally:
         connection.close()
+
+
+def _authorize_local(
+    connection: sqlite3.Connection,
+    run_id: str,
+    requirements: list[str],
+    reason: str,
+) -> None:
+    timestamp = now()
+    connection.executemany(
+        "INSERT OR REPLACE INTO authorizations(run_id, requirement, reason, authorized_at) VALUES(?, ?, ?, ?)",
+        [(run_id, requirement, reason, timestamp) for requirement in requirements],
+    )
 
 
 def authorize_local(project: Path, run_id: str, requirements: list[str], reason: str) -> None:
-    connection = cache_connect(project, create=True)
-    if connection is None:
-        raise NoctisError("unable to create local cache")
-    try:
-        timestamp = now()
-        connection.executemany(
-            "INSERT OR REPLACE INTO authorizations(run_id, requirement, reason, authorized_at) VALUES(?, ?, ?, ?)",
-            [(run_id, requirement, reason, timestamp) for requirement in requirements],
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    with mutation_transaction(project) as connection:
+        _authorize_local(connection, run_id, requirements, reason)
+
+
+def _deauthorize_local(
+    connection: sqlite3.Connection, run_id: str, requirements: list[str]
+) -> None:
+    connection.executemany(
+        "DELETE FROM authorizations WHERE run_id = ? AND requirement = ?",
+        [(run_id, requirement) for requirement in requirements],
+    )
 
 
 def deauthorize_local(project: Path, run_id: str, requirements: list[str]) -> None:
-    connection = cache_connect(project, create=False)
-    if connection is None:
-        return
-    try:
-        connection.executemany(
-            "DELETE FROM authorizations WHERE run_id = ? AND requirement = ?",
-            [(run_id, requirement) for requirement in requirements],
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    with mutation_transaction(project) as connection:
+        _deauthorize_local(connection, run_id, requirements)
+
+
+def _local_claim(
+    connection: sqlite3.Connection, run_id: str, task_id: str
+) -> dict[str, Any] | None:
+    row = connection.execute(
+        "SELECT * FROM claims WHERE run_id = ? AND task_id = ?", (run_id, task_id)
+    ).fetchone()
+    return dict(row) if row is not None else None
 
 
 def local_claim(project: Path, run_id: str, task_id: str) -> dict[str, Any] | None:
@@ -264,13 +296,18 @@ def local_claim(project: Path, run_id: str, task_id: str) -> dict[str, Any] | No
     if connection is None:
         return None
     try:
-        row = connection.execute(
-            "SELECT * FROM claims WHERE run_id = ? AND task_id = ?",
-            (run_id, task_id),
-        ).fetchone()
-        return dict(row) if row is not None else None
+        return _local_claim(connection, run_id, task_id)
     finally:
         connection.close()
+
+
+def _local_claims(
+    connection: sqlite3.Connection, run_id: str
+) -> dict[str, dict[str, Any]]:
+    return {
+        row["task_id"]: dict(row)
+        for row in connection.execute("SELECT * FROM claims WHERE run_id = ?", (run_id,))
+    }
 
 
 def local_claims(project: Path, run_id: str) -> dict[str, dict[str, Any]]:
@@ -278,27 +315,22 @@ def local_claims(project: Path, run_id: str) -> dict[str, dict[str, Any]]:
     if connection is None:
         return {}
     try:
-        return {
-            row["task_id"]: dict(row)
-            for row in connection.execute(
-                "SELECT * FROM claims WHERE run_id = ?", (run_id,)
-            )
-        }
+        return _local_claims(connection, run_id)
     finally:
         connection.close()
+
+
+def _delete_local_claim(
+    connection: sqlite3.Connection, run_id: str, task_id: str
+) -> None:
+    connection.execute(
+        "DELETE FROM claims WHERE run_id = ? AND task_id = ?", (run_id, task_id)
+    )
 
 
 def delete_local_claim(project: Path, run_id: str, task_id: str) -> None:
-    connection = cache_connect(project, create=False)
-    if connection is None:
-        return
-    try:
-        connection.execute(
-            "DELETE FROM claims WHERE run_id = ? AND task_id = ?", (run_id, task_id)
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    with mutation_transaction(project) as connection:
+        _delete_local_claim(connection, run_id, task_id)
 
 
 def validate_run_record(value: Any, expected_run_id: str) -> dict[str, Any]:
@@ -613,9 +645,16 @@ def load_run_state(project: Path, run_id: str) -> dict[str, Any]:
 
 
 def apply_local_claims(
-    project: Path, run_id: str, tasks: list[dict[str, Any]]
+    project: Path,
+    run_id: str,
+    tasks: list[dict[str, Any]],
+    connection: sqlite3.Connection | None = None,
 ) -> list[dict[str, Any]]:
-    claims = local_claims(project, run_id)
+    claims = (
+        local_claims(project, run_id)
+        if connection is None
+        else _local_claims(connection, run_id)
+    )
     current_head = git_head(project)
     result: list[dict[str, Any]] = []
     for task in tasks:
@@ -824,37 +863,39 @@ def show_events(project: Path, run_id: str, limit: int) -> dict[str, Any]:
 
 def recover(project: Path, run_id: str | None) -> dict[str, Any]:
     project = project.resolve()
-    if run_id is None:
-        root = runs_root(project)
-        directories = (
-            sorted(
-                path
-                for path in root.iterdir()
-                if path.is_dir() and (path / "run.json").is_file()
+    with mutation_transaction(project) as connection:
+        if run_id is None:
+            root = runs_root(project)
+            directories = (
+                sorted(
+                    path
+                    for path in root.iterdir()
+                    if path.is_dir() and (path / "run.json").is_file()
+                )
+                if root.is_dir()
+                else []
             )
-            if root.is_dir()
-            else []
-        )
-        states = [load_run_state(project, path.name) for path in directories]
-    else:
-        states = [load_run_state(project, run_id)]
-    rebuild_cache(project)
-    runs = [
-        {
-            "id": state["record"]["id"],
-            "status": derive_run_status(state["tasks"]),
-            "run_revision": state["run_revision"],
-            "ready": ready_task_ids(state["tasks"]),
-            "checkpoint": checkpoint_info(project, state["record"]["id"]),
+            states = [load_run_state(project, path.name) for path in directories]
+        else:
+            states = [load_run_state(project, run_id)]
+        connection.execute("DELETE FROM claims")
+        connection.execute("DELETE FROM authorizations")
+        runs = [
+            {
+                "id": state["record"]["id"],
+                "status": derive_run_status(state["tasks"]),
+                "run_revision": state["run_revision"],
+                "ready": ready_task_ids(state["tasks"]),
+                "checkpoint": checkpoint_info(project, state["record"]["id"]),
+            }
+            for state in states
+        ]
+        return {
+            "schema": "noctis.recovery/v1",
+            "runs": runs,
+            "local_claims": "cleared",
+            "active_grants": [],
         }
-        for state in states
-    ]
-    return {
-        "schema": "noctis.recovery/v1",
-        "runs": runs,
-        "local_claims": "cleared",
-        "active_grants": [],
-    }
 
 
 def check_extension_value(project: Path, run_id: str, value: Any) -> dict[str, Any]:
@@ -904,32 +945,33 @@ def extend_run_value(
 ) -> dict[str, Any]:
     project = project.resolve()
     require_committed_checkpoint(project, run_id)
-    checked = check_extension_value(project, run_id, value)
-    if checked["run_revision"] != expected_run_revision:
-        raise NoctisError(
-            f"Run revision conflict: expected {expected_run_revision}, actual {checked['run_revision']}"
+    with mutation_transaction(project):
+        checked = check_extension_value(project, run_id, value)
+        if checked["run_revision"] != expected_run_revision:
+            raise NoctisError(
+                f"Run revision conflict: expected {expected_run_revision}, actual {checked['run_revision']}"
+            )
+        event = new_event(
+            run_id,
+            None,
+            "run.tasks-added",
+            expected_run_revision,
+            {"extension": checked["extension"]},
         )
-    event = new_event(
-        run_id,
-        None,
-        "run.tasks-added",
-        expected_run_revision,
-        {"extension": checked["extension"]},
-    )
-    path = append_event(project, event)
-    refreshed = load_run_state(project, run_id)
-    return {
-        "ok": True,
-        "run_id": run_id,
-        "run_revision": event["revision"],
-        "executors_added": checked["executors_added"],
-        "tasks_added": checked["tasks_added"],
-        "missing_grants": checked["missing_grants"],
-        "status": derive_run_status(refreshed["tasks"]),
-        "ready": ready_task_ids(refreshed["tasks"]),
-        "checkpoint_required": [git_relative(project, path)],
-        "checkpoint": checkpoint_info(project, run_id),
-    }
+        path = append_event(project, event)
+        refreshed = load_run_state(project, run_id)
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "run_revision": event["revision"],
+            "executors_added": checked["executors_added"],
+            "tasks_added": checked["tasks_added"],
+            "missing_grants": checked["missing_grants"],
+            "status": derive_run_status(refreshed["tasks"]),
+            "ready": ready_task_ids(refreshed["tasks"]),
+            "checkpoint_required": [git_relative(project, path)],
+            "checkpoint": checkpoint_info(project, run_id),
+        }
 
 
 def extend_run(
@@ -973,41 +1015,41 @@ def add_task(
 def claim_task(project: Path, run_id: str, requested_task: str | None) -> dict[str, Any]:
     project = project.resolve()
     checkpoint = require_committed_checkpoint(project, run_id)
-    state = load_run_state(project, run_id)
-    visible_tasks = apply_local_claims(project, run_id, state["tasks"])
-    ready = ready_task_ids(visible_tasks)
-    task_id = requested_task or (ready[0] if ready else None)
-    if task_id is None:
-        working = [task["id"] for task in visible_tasks if task["status"] == "working"]
-        detail = (
-            f"; local working tasks require reconciliation: {', '.join(working)}"
-            if working
-            else ""
+    with mutation_transaction(project) as connection:
+        state = load_run_state(project, run_id)
+        visible_tasks = apply_local_claims(
+            project, run_id, state["tasks"], connection
         )
-        raise NoctisError("no task is ready" + detail)
-    if task_id not in ready:
-        raise NoctisError(f"task is not ready: {task_id}")
-    task = next(item for item in state["tasks"] if item["id"] == task_id)
-    recorded = set(state["grants"])
-    active = set(active_grants(project, run_id))
-    missing_recorded = sorted(set(task["requirements"]) - recorded)
-    if missing_recorded:
-        raise NoctisError(
-            f"task '{task_id}' lacks recorded grants: {', '.join(missing_recorded)}"
-        )
-    missing_active = sorted(set(task["requirements"]) - active)
-    if missing_active:
-        raise NoctisError(
-            f"task '{task_id}' requires current-machine authorization: {', '.join(missing_active)}"
-        )
-    claim_id = str(uuid.uuid4())
-    attempt = task["attempt"] + 1
-    timestamp = now()
-    connection = cache_connect(project, create=True)
-    if connection is None:
-        raise NoctisError("unable to create local cache")
-    try:
-        connection.execute("BEGIN IMMEDIATE")
+        ready = ready_task_ids(visible_tasks)
+        task_id = requested_task or (ready[0] if ready else None)
+        if task_id is None:
+            working = [
+                task["id"] for task in visible_tasks if task["status"] == "working"
+            ]
+            detail = (
+                f"; local working tasks require reconciliation: {', '.join(working)}"
+                if working
+                else ""
+            )
+            raise NoctisError("no task is ready" + detail)
+        if task_id not in ready:
+            raise NoctisError(f"task is not ready: {task_id}")
+        task = next(item for item in state["tasks"] if item["id"] == task_id)
+        recorded = set(state["grants"])
+        active = set(_active_grants(connection, run_id))
+        missing_recorded = sorted(set(task["requirements"]) - recorded)
+        if missing_recorded:
+            raise NoctisError(
+                f"task '{task_id}' lacks recorded grants: {', '.join(missing_recorded)}"
+            )
+        missing_active = sorted(set(task["requirements"]) - active)
+        if missing_active:
+            raise NoctisError(
+                f"task '{task_id}' requires current-machine authorization: {', '.join(missing_active)}"
+            )
+        claim_id = str(uuid.uuid4())
+        attempt = task["attempt"] + 1
+        timestamp = now()
         connection.execute(
             "INSERT INTO claims(run_id, task_id, claim_id, attempt, base_revision, checkpoint_commit, started_at) VALUES(?, ?, ?, ?, ?, ?, ?)",
             (
@@ -1020,40 +1062,34 @@ def claim_task(project: Path, run_id: str, requested_task: str | None) -> dict[s
                 timestamp,
             ),
         )
-        connection.commit()
-    except sqlite3.IntegrityError as error:
-        connection.rollback()
-        raise NoctisError(f"task already has a local claim: {task_id}") from error
-    finally:
-        connection.close()
-    by_id = {item["id"]: item for item in state["tasks"]}
-    dependencies = []
-    for dependency in task["needs"]:
-        result = by_id[dependency]["result"]
-        if result is None:
-            raise NoctisError(f"completed dependency has no result: {dependency}")
-        dependencies.append({"task_id": dependency, "result": result})
-    executor = next(
-        item for item in state["executors"] if item["id"] == task["executor"]
-    )
-    return {
-        "schema": "noctis.claim/v1",
-        "run_id": run_id,
-        "task_id": task_id,
-        "claim_id": claim_id,
-        "attempt": attempt,
-        "revision": task["revision"],
-        "run_revision": state["run_revision"],
-        "executor": executor,
-        "request": task["request"],
-        "dependencies": dependencies,
-        "requirements": {
-            "required": task["requirements"],
-            "granted": task["requirements"],
-        },
-        "checkpoint": {"commit": checkpoint["commit"]},
-        "idempotency_key": f"{run_id}/{task_id}",
-    }
+        by_id = {item["id"]: item for item in state["tasks"]}
+        dependencies = []
+        for dependency in task["needs"]:
+            result = by_id[dependency]["result"]
+            if result is None:
+                raise NoctisError(f"completed dependency has no result: {dependency}")
+            dependencies.append({"task_id": dependency, "result": result})
+        executor = next(
+            item for item in state["executors"] if item["id"] == task["executor"]
+        )
+        return {
+            "schema": "noctis.claim/v1",
+            "run_id": run_id,
+            "task_id": task_id,
+            "claim_id": claim_id,
+            "attempt": attempt,
+            "revision": task["revision"],
+            "run_revision": state["run_revision"],
+            "executor": executor,
+            "request": task["request"],
+            "dependencies": dependencies,
+            "requirements": {
+                "required": task["requirements"],
+                "granted": task["requirements"],
+            },
+            "checkpoint": {"commit": checkpoint["commit"]},
+            "idempotency_key": f"{run_id}/{task_id}",
+        }
 
 
 def finish_task(
@@ -1066,63 +1102,64 @@ def finish_task(
 ) -> dict[str, Any]:
     project = project.resolve()
     require_committed_checkpoint(project, run_id)
-    state = load_run_state(project, run_id)
-    task = next((item for item in state["tasks"] if item["id"] == task_id), None)
-    if task is None:
-        raise NoctisError(f"task does not exist: {task_id}")
-    claim = local_claim(project, run_id, task_id)
-    if claim is None or claim["claim_id"] != claim_id:
-        raise NoctisError(f"task is not held by local claim {claim_id}")
-    if task["status"] != "pending":
-        raise NoctisError(f"task cannot finish from {task['status']}")
-    if task["revision"] != expected_revision or claim["base_revision"] != expected_revision:
-        raise NoctisError(
-            f"revision conflict for {task_id}: expected {expected_revision}, actual {task['revision']}"
+    with mutation_transaction(project) as connection:
+        state = load_run_state(project, run_id)
+        task = next((item for item in state["tasks"] if item["id"] == task_id), None)
+        if task is None:
+            raise NoctisError(f"task does not exist: {task_id}")
+        claim = _local_claim(connection, run_id, task_id)
+        if claim is None or claim["claim_id"] != claim_id:
+            raise NoctisError(f"task is not held by local claim {claim_id}")
+        if task["status"] != "pending":
+            raise NoctisError(f"task cannot finish from {task['status']}")
+        if task["revision"] != expected_revision or claim["base_revision"] != expected_revision:
+            raise NoctisError(
+                f"revision conflict for {task_id}: expected {expected_revision}, actual {task['revision']}"
+            )
+        if not git_is_ancestor(project, claim["checkpoint_commit"], git_head(project)):
+            raise NoctisError("current HEAD does not inherit the claimed checkpoint")
+        effective = set(state["grants"]) & set(_active_grants(connection, run_id))
+        missing = sorted(set(task["requirements"]) - effective)
+        if missing:
+            raise NoctisError(
+                f"task '{task_id}' no longer has effective grants: {', '.join(missing)}"
+            )
+        result = validate_result(
+            load_json(result_path),
+            run_id,
+            task_id,
+            claim_id,
+            claim["attempt"],
         )
-    if not git_is_ancestor(project, claim["checkpoint_commit"], git_head(project)):
-        raise NoctisError("current HEAD does not inherit the claimed checkpoint")
-    effective = set(state["grants"]) & set(active_grants(project, run_id))
-    missing = sorted(set(task["requirements"]) - effective)
-    if missing:
-        raise NoctisError(
-            f"task '{task_id}' no longer has effective grants: {', '.join(missing)}"
+        directory = run_directory(project, run_id)
+        result_relative = f"results/{task_id}/attempt-{claim['attempt']}.json"
+        stored_result = directory.joinpath(*Path(result_relative).parts)
+        write_once(stored_result, result, "task result")
+        event = new_event(
+            run_id,
+            task_id,
+            f"task.{result['status']}",
+            task["revision"],
+            {"attempt": claim["attempt"], "result": result_relative},
+            event_id=claim_id,
         )
-    result = validate_result(
-        load_json(result_path),
-        run_id,
-        task_id,
-        claim_id,
-        claim["attempt"],
-    )
-    directory = run_directory(project, run_id)
-    result_relative = f"results/{task_id}/attempt-{claim['attempt']}.json"
-    stored_result = directory.joinpath(*Path(result_relative).parts)
-    write_once(stored_result, result, "task result")
-    event = new_event(
-        run_id,
-        task_id,
-        f"task.{result['status']}",
-        task["revision"],
-        {"attempt": claim["attempt"], "result": result_relative},
-        event_id=claim_id,
-    )
-    event_path = append_event(project, event)
-    delete_local_claim(project, run_id, task_id)
-    refreshed = load_run_state(project, run_id)
-    return {
-        "ok": True,
-        "run_id": run_id,
-        "task_id": task_id,
-        "task_status": result["status"],
-        "run_status": derive_run_status(refreshed["tasks"]),
-        "revision": event["revision"],
-        "ready": ready_task_ids(refreshed["tasks"]),
-        "checkpoint_required": [
-            git_relative(project, stored_result),
-            git_relative(project, event_path),
-        ],
-        "checkpoint": checkpoint_info(project, run_id),
-    }
+        event_path = append_event(project, event)
+        _delete_local_claim(connection, run_id, task_id)
+        refreshed = load_run_state(project, run_id)
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "task_id": task_id,
+            "task_status": result["status"],
+            "run_status": derive_run_status(refreshed["tasks"]),
+            "revision": event["revision"],
+            "ready": ready_task_ids(refreshed["tasks"]),
+            "checkpoint_required": [
+                git_relative(project, stored_result),
+                git_relative(project, event_path),
+            ],
+            "checkpoint": checkpoint_info(project, run_id),
+        }
 
 
 def retry_task(
@@ -1135,51 +1172,52 @@ def retry_task(
 ) -> dict[str, Any]:
     project = project.resolve()
     require_committed_checkpoint(project, run_id)
-    state = load_run_state(project, run_id)
-    task = next((item for item in state["tasks"] if item["id"] == task_id), None)
-    if task is None:
-        raise NoctisError(f"task does not exist: {task_id}")
-    if task["revision"] != expected_revision:
-        raise NoctisError(
-            f"revision conflict for {task_id}: expected {expected_revision}, actual {task['revision']}"
+    with mutation_transaction(project) as connection:
+        state = load_run_state(project, run_id)
+        task = next((item for item in state["tasks"] if item["id"] == task_id), None)
+        if task is None:
+            raise NoctisError(f"task does not exist: {task_id}")
+        if task["revision"] != expected_revision:
+            raise NoctisError(
+                f"revision conflict for {task_id}: expected {expected_revision}, actual {task['revision']}"
+            )
+        claim = _local_claim(connection, run_id, task_id)
+        if task["status"] in TERMINAL_STATES:
+            raise NoctisError(f"task cannot be retried from {task['status']}")
+        if task["status"] == "pending" and claim is None:
+            raise NoctisError("task cannot be retried from pending without a local claim")
+        if claim is not None and not git_is_ancestor(
+            project, claim["checkpoint_commit"], git_head(project)
+        ):
+            raise NoctisError("current HEAD does not inherit the claimed checkpoint")
+        if claim is not None and task["requirements"] and not acknowledge_requirements:
+            raise NoctisError(
+                "retry requires --acknowledge-requirements after reconciling prior execution"
+            )
+        attempt = claim["attempt"] if claim is not None else task["attempt"]
+        event = new_event(
+            run_id,
+            task_id,
+            "task.retried",
+            task["revision"],
+            {
+                "attempt": attempt,
+                "reason": text_value(reason, "reason"),
+                "acknowledged_requirements": acknowledge_requirements,
+            },
+            event_id=claim["claim_id"] if claim is not None else None,
         )
-    claim = local_claim(project, run_id, task_id)
-    if task["status"] in TERMINAL_STATES:
-        raise NoctisError(f"task cannot be retried from {task['status']}")
-    if task["status"] == "pending" and claim is None:
-        raise NoctisError("task cannot be retried from pending without a local claim")
-    if claim is not None and not git_is_ancestor(
-        project, claim["checkpoint_commit"], git_head(project)
-    ):
-        raise NoctisError("current HEAD does not inherit the claimed checkpoint")
-    if claim is not None and task["requirements"] and not acknowledge_requirements:
-        raise NoctisError(
-            "retry requires --acknowledge-requirements after reconciling prior execution"
-        )
-    attempt = claim["attempt"] if claim is not None else task["attempt"]
-    event = new_event(
-        run_id,
-        task_id,
-        "task.retried",
-        task["revision"],
-        {
-            "attempt": attempt,
-            "reason": text_value(reason, "reason"),
-            "acknowledged_requirements": acknowledge_requirements,
-        },
-        event_id=claim["claim_id"] if claim is not None else None,
-    )
-    event_path = append_event(project, event)
-    delete_local_claim(project, run_id, task_id)
-    return {
-        "ok": True,
-        "run_id": run_id,
-        "task_id": task_id,
-        "status": "pending",
-        "revision": event["revision"],
-        "checkpoint_required": [git_relative(project, event_path)],
-        "checkpoint": checkpoint_info(project, run_id),
-    }
+        event_path = append_event(project, event)
+        _delete_local_claim(connection, run_id, task_id)
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "task_id": task_id,
+            "status": "pending",
+            "revision": event["revision"],
+            "checkpoint_required": [git_relative(project, event_path)],
+            "checkpoint": checkpoint_info(project, run_id),
+        }
 
 
 def cancel_task(
@@ -1192,69 +1230,70 @@ def cancel_task(
 ) -> dict[str, Any]:
     project = project.resolve()
     require_committed_checkpoint(project, run_id)
-    state = load_run_state(project, run_id)
-    task = next((item for item in state["tasks"] if item["id"] == task_id), None)
-    if task is None:
-        raise NoctisError(f"task does not exist: {task_id}")
-    if task["revision"] != expected_revision:
-        raise NoctisError(
-            f"revision conflict for {task_id}: expected {expected_revision}, actual {task['revision']}"
-        )
-    if task["status"] in TERMINAL_STATES:
-        raise NoctisError(f"task cannot be canceled from {task['status']}")
-    claim = local_claim(project, run_id, task_id)
-    if claim is not None and task["requirements"] and not acknowledge_requirements:
-        raise NoctisError(
-            "cancel requires --acknowledge-requirements because cancellation does not undo execution"
-        )
-    selected = descendants(state["tasks"], task_id)
-    events: list[Path] = []
-    canceled: list[str] = []
-    for candidate in state["tasks"]:
-        if candidate["id"] not in selected:
-            continue
-        if candidate["id"] != task_id and candidate["status"] != "pending":
-            continue
-        candidate_claim = local_claim(project, run_id, candidate["id"])
-        attempt = (
-            candidate_claim["attempt"]
-            if candidate_claim is not None
-            else candidate["attempt"]
-        )
-        event = new_event(
-            run_id,
-            candidate["id"],
-            "task.canceled",
-            candidate["revision"],
-            {
-                "attempt": attempt,
-                "reason": (
-                    text_value(reason, "reason")
-                    if candidate["id"] == task_id
-                    else f"dependency canceled: {task_id}"
+    with mutation_transaction(project) as connection:
+        state = load_run_state(project, run_id)
+        task = next((item for item in state["tasks"] if item["id"] == task_id), None)
+        if task is None:
+            raise NoctisError(f"task does not exist: {task_id}")
+        if task["revision"] != expected_revision:
+            raise NoctisError(
+                f"revision conflict for {task_id}: expected {expected_revision}, actual {task['revision']}"
+            )
+        if task["status"] in TERMINAL_STATES:
+            raise NoctisError(f"task cannot be canceled from {task['status']}")
+        claim = _local_claim(connection, run_id, task_id)
+        if claim is not None and task["requirements"] and not acknowledge_requirements:
+            raise NoctisError(
+                "cancel requires --acknowledge-requirements because cancellation does not undo execution"
+            )
+        selected = descendants(state["tasks"], task_id)
+        events: list[Path] = []
+        canceled: list[str] = []
+        for candidate in state["tasks"]:
+            if candidate["id"] not in selected:
+                continue
+            if candidate["id"] != task_id and candidate["status"] != "pending":
+                continue
+            candidate_claim = _local_claim(connection, run_id, candidate["id"])
+            attempt = (
+                candidate_claim["attempt"]
+                if candidate_claim is not None
+                else candidate["attempt"]
+            )
+            event = new_event(
+                run_id,
+                candidate["id"],
+                "task.canceled",
+                candidate["revision"],
+                {
+                    "attempt": attempt,
+                    "reason": (
+                        text_value(reason, "reason")
+                        if candidate["id"] == task_id
+                        else f"dependency canceled: {task_id}"
+                    ),
+                    "acknowledged_requirements": (
+                        acknowledge_requirements if candidate["id"] == task_id else False
+                    ),
+                    "cascade_from": None if candidate["id"] == task_id else task_id,
+                },
+                event_id=(
+                    candidate_claim["claim_id"] if candidate_claim is not None else None
                 ),
-                "acknowledged_requirements": (
-                    acknowledge_requirements if candidate["id"] == task_id else False
-                ),
-                "cascade_from": None if candidate["id"] == task_id else task_id,
-            },
-            event_id=(
-                candidate_claim["claim_id"] if candidate_claim is not None else None
-            ),
-        )
-        events.append(append_event(project, event))
-        delete_local_claim(project, run_id, candidate["id"])
-        canceled.append(candidate["id"])
-    return {
-        "ok": True,
-        "run_id": run_id,
-        "task_id": task_id,
-        "status": "canceled",
-        "revision": expected_revision + 1,
-        "canceled": canceled,
-        "checkpoint_required": [git_relative(project, path) for path in events],
-        "checkpoint": checkpoint_info(project, run_id),
-    }
+            )
+            events.append(append_event(project, event))
+            _delete_local_claim(connection, run_id, candidate["id"])
+            canceled.append(candidate["id"])
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "task_id": task_id,
+            "status": "canceled",
+            "revision": expected_revision + 1,
+            "canceled": canceled,
+            "checkpoint_required": [git_relative(project, path) for path in events],
+            "checkpoint": checkpoint_info(project, run_id),
+        }
 
 
 def grant_requirements(
@@ -1263,39 +1302,40 @@ def grant_requirements(
     project = project.resolve()
     require_committed_checkpoint(project, run_id)
     normalized = sorted(set(identifier(item, "requirement") for item in requirements))
-    state = load_run_state(project, run_id)
-    requested = {
-        requirement
-        for task in state["tasks"]
-        for requirement in task["requirements"]
-    }
-    excess = sorted(set(normalized) - requested)
-    if excess:
-        raise NoctisError(
-            "grants exceed requirements requested by the Run: " + ", ".join(excess)
-        )
-    normalized_reason = text_value(reason, "reason")
-    new_requirements = sorted(set(normalized) - set(state["grants"]))
-    checkpoint_required: list[str] = []
-    if new_requirements:
-        event = new_event(
-            run_id,
-            None,
-            "run.granted",
-            state["run_revision"],
-            {"requirements": new_requirements, "reason": normalized_reason},
-        )
-        path = append_event(project, event)
-        checkpoint_required.append(git_relative(project, path))
-    authorize_local(project, run_id, normalized, normalized_reason)
-    return {
-        "ok": True,
-        "run_id": run_id,
-        "grants": sorted(set(state["grants"]) | set(normalized)),
-        "active_grants": active_grants(project, run_id),
-        "checkpoint_required": checkpoint_required,
-        "checkpoint": checkpoint_info(project, run_id),
-    }
+    with mutation_transaction(project) as connection:
+        state = load_run_state(project, run_id)
+        requested = {
+            requirement
+            for task in state["tasks"]
+            for requirement in task["requirements"]
+        }
+        excess = sorted(set(normalized) - requested)
+        if excess:
+            raise NoctisError(
+                "grants exceed requirements requested by the Run: " + ", ".join(excess)
+            )
+        normalized_reason = text_value(reason, "reason")
+        new_requirements = sorted(set(normalized) - set(state["grants"]))
+        checkpoint_required: list[str] = []
+        if new_requirements:
+            event = new_event(
+                run_id,
+                None,
+                "run.granted",
+                state["run_revision"],
+                {"requirements": new_requirements, "reason": normalized_reason},
+            )
+            path = append_event(project, event)
+            checkpoint_required.append(git_relative(project, path))
+        _authorize_local(connection, run_id, normalized, normalized_reason)
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "grants": sorted(set(state["grants"]) | set(normalized)),
+            "active_grants": _active_grants(connection, run_id),
+            "checkpoint_required": checkpoint_required,
+            "checkpoint": checkpoint_info(project, run_id),
+        }
 
 
 def revoke_requirements(
@@ -1304,24 +1344,25 @@ def revoke_requirements(
     project = project.resolve()
     require_committed_checkpoint(project, run_id)
     normalized = sorted(set(identifier(item, "requirement") for item in requirements))
-    state = load_run_state(project, run_id)
-    event = new_event(
-        run_id,
-        None,
-        "run.revoked",
-        state["run_revision"],
-        {"requirements": normalized, "reason": text_value(reason, "reason")},
-    )
-    path = append_event(project, event)
-    deauthorize_local(project, run_id, normalized)
-    return {
-        "ok": True,
-        "run_id": run_id,
-        "grants": sorted(set(state["grants"]) - set(normalized)),
-        "active_grants": active_grants(project, run_id),
-        "checkpoint_required": [git_relative(project, path)],
-        "checkpoint": checkpoint_info(project, run_id),
-    }
+    with mutation_transaction(project) as connection:
+        state = load_run_state(project, run_id)
+        event = new_event(
+            run_id,
+            None,
+            "run.revoked",
+            state["run_revision"],
+            {"requirements": normalized, "reason": text_value(reason, "reason")},
+        )
+        path = append_event(project, event)
+        _deauthorize_local(connection, run_id, normalized)
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "grants": sorted(set(state["grants"]) - set(normalized)),
+            "active_grants": _active_grants(connection, run_id),
+            "checkpoint_required": [git_relative(project, path)],
+            "checkpoint": checkpoint_info(project, run_id),
+        }
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -286,6 +287,43 @@ class NoctisRuntimeTests(unittest.TestCase):
             runtime.claim_task(self.project, run_id, "remote-task")["executor"]["id"],
             "remote:worker:2",
         )
+
+    def test_concurrent_extensions_leave_one_replayable_event(self) -> None:
+        run_id = self.create([self.task("first")])
+        self.checkpoint()
+        start = threading.Barrier(2)
+        outcomes: list[tuple[str, object]] = []
+
+        def extend(task_id: str) -> None:
+            start.wait()
+            try:
+                result = runtime.extend_run_value(
+                    self.project,
+                    run_id,
+                    self.extension([self.task(task_id)]),
+                    0,
+                )
+                outcomes.append(("success", result))
+            except contracts.NoctisError as error:
+                outcomes.append(("error", str(error)))
+
+        threads = [
+            threading.Thread(target=extend, args=(task_id,))
+            for task_id in ("second", "third")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+            self.assertFalse(thread.is_alive(), "concurrent extension did not finish")
+
+        self.assertEqual([kind for kind, _ in outcomes].count("success"), 1)
+        self.assertEqual([kind for kind, _ in outcomes].count("error"), 1)
+        event_directory = self.project / ".noctis" / "runs" / run_id / "events"
+        self.assertEqual(len(list(event_directory.glob("*.json"))), 1)
+        state = runtime.load_run_state(self.project, run_id)
+        self.assertEqual(state["run_revision"], 1)
+        self.assertEqual(len(state["tasks"]), 2)
 
     def test_recover_discards_local_claims_and_machine_authorization(self) -> None:
         run_id = self.create([self.task("first", requirements=["secret.read"])], ["secret.read"])

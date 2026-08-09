@@ -150,4 +150,4 @@ Extension 通过 `run.tasks-added` 事件持久化，使用独立的 Run revisio
 - Run：`run.granted`、`run.revoked`、`run.tasks-added`。
 - Task：`task.completed`、`task.failed`、`task.blocked`、`task.input-required`、`task.retried`、`task.canceled`。
 
-Run Event 使用连续 `run_revision`；每个 Task Event 使用该 Task 独立的连续 revision。相同 previous revision 上出现两个 Event、Result 缺失、路径逃逸或状态不匹配时，重放失败。
+Run Event 使用连续 `run_revision`；每个 Task Event 使用该 Task 独立的连续 revision。同一 worktree 的 CLI mutation 使用本机 SQLite transaction 串行化校验与写入。不同 clone 合并后若在相同 previous revision 上出现两个 Event，或出现 Result 缺失、路径逃逸、状态不匹配，重放失败。

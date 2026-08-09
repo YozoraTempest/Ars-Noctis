@@ -39,7 +39,9 @@ git commit -m "chore(noctis): 追加运行任务"
 python scripts/noctis.py task-add --project <project> --run-id <uuid> --task <task.json> --origin-kind user-request --reason "用户新增验收任务" --expected-run-revision <n>
 ```
 
-若 Task 使用新的 executor，同时传 `--executor <executor.json>`。`extension-check` 返回当前 `run_revision`、新增项和 `missing_grants`。`run-extend` 使用 optimistic concurrency；revision 冲突时重新读取 Run、合并新变化，再提交新的 Extension。
+若 Task 使用新的 executor，同时传 `--executor <executor.json>`。`extension-check` 返回当前 `run_revision`、新增项和 `missing_grants`。同一 worktree 的持久变更先由 `.git/noctis/cache.sqlite3` 中的 mutation transaction 互斥，再执行 revision 校验和事件写入；revision 冲突时重新读取 Run、合并新变化，再提交新的 Extension。
+
+该互斥只覆盖共享同一 Git 元数据目录的进程，不是跨 clone 的分布式锁。不同 clone 或分支仍可能各自产生同一 previous revision 的 Event；合并前先基于最新分支重新提交变化，直接合并出的冲突事件会被严格重放拒绝。
 
 不要把新增目标伪装成 retry，也不要修改 Plan。Retry 表示同一 Task 的同一 request 再尝试；Extension 表示 Run 获得了新的工作。
 
