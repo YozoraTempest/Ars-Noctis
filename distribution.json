@@ -10,7 +10,10 @@
     "full": [
       "ars",
       "noctis",
+      "spec",
+      "design",
       "implement",
+      "test",
       "code-review",
       "verify"
     ]
@@ -64,8 +67,20 @@
       ]
     },
     {
+      "id": "spec",
+      "source": "skills/spec"
+    },
+    {
+      "id": "design",
+      "source": "skills/design"
+    },
+    {
       "id": "implement",
       "source": "skills/implement"
+    },
+    {
+      "id": "test",
+      "source": "skills/test"
     },
     {
       "id": "code-review",

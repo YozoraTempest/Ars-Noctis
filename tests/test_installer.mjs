@@ -90,7 +90,7 @@ test('distribution exposes declarative profiles and independent skills', () => {
   assert.deepEqual(distribution.profiles.core, ['ars', 'noctis']);
   assert.deepEqual(
     distribution.skills.map((skill) => skill.id),
-    ['ars', 'noctis', 'implement', 'code-review', 'verify'],
+    ['ars', 'noctis', 'spec', 'design', 'implement', 'test', 'code-review', 'verify'],
   );
   assert.deepEqual(
     selectSkills(distribution, { skillIds: ['verify'] }).map((skill) => skill.id),
@@ -153,7 +153,7 @@ test('init wizard selects profiles, destination, and confirmation', async () => 
   assert.deepEqual(selection.skillIds, []);
   assert.deepEqual(
     selection.selectedSkillIds,
-    ['ars', 'noctis', 'implement', 'code-review', 'verify'],
+    ['ars', 'noctis', 'spec', 'design', 'implement', 'test', 'code-review', 'verify'],
   );
   assert.equal(selection.skillsDirectory, DEFAULT_SKILLS_DIRECTORY);
   assert.match(wizard.output(), /Installation plan:/);
@@ -161,7 +161,7 @@ test('init wizard selects profiles, destination, and confirmation', async () => 
 });
 
 test('init wizard supports custom Skills and an explicit project-relative directory', async () => {
-  const wizard = scriptedWizard(['custom', '3,verify,3', '.custom/skills', 'yes']);
+  const wizard = scriptedWizard(['custom', 'implement,verify,implement', '.custom/skills', 'yes']);
   const selection = await promptInitOptions({
     distribution,
     project: ROOT,
@@ -281,7 +281,7 @@ test('full profile installs every currently declared skill', async (t) => {
   const result = await installSkills({ distribution, installation, skills });
   assert.deepEqual(
     result.actions.map((action) => action.skill),
-    ['ars', 'noctis', 'implement', 'code-review', 'verify'],
+    ['ars', 'noctis', 'spec', 'design', 'implement', 'test', 'code-review', 'verify'],
   );
   const snapshot = await installationSnapshot({ distribution, installation });
   assert.equal(snapshot.skills.every((skill) => skill.installed), true);

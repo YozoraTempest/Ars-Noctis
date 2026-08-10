@@ -27,7 +27,15 @@ class ArsContractTests(unittest.TestCase):
         cls.ars = load_module()
 
     def test_all_native_repository_skills_validate(self) -> None:
-        expected = {"ars", "implement", "code-review", "verify"}
+        expected = {
+            "ars",
+            "spec",
+            "design",
+            "implement",
+            "test",
+            "code-review",
+            "verify",
+        }
         actual = set()
         for path in sorted((REPOSITORY_ROOT / "skills").iterdir()):
             if (path / "ars.json").is_file():

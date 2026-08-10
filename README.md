@@ -10,7 +10,7 @@ Ars-Noctis 发布一组可独立安装的 Agent Skills，以及一个协议无�
 - **Noctis Core** 只管理 executor、request、requirement、result、Task DAG 与追加事件。
 - **Ars** 发现 `ars.json` provider，并通过 Adapter 将 Ars Plan、Task 与 Result 映射到 Noctis 公共 JSON 契约。
 
-依赖方向固定为 `Ars -> Noctis public contract`。Noctis 不导入 Ars、不扫描 `ars.json`，也不为 implement、code-review、verify 或 fix 建立专用流程。
+依赖方向固定为 `Ars -> Noctis public contract`。Noctis 不导入 Ars、不扫描 `ars.json`，也不为 implement、test、code-review、verify 或 fix 建立专用流程。
 
 ## 快速开始
 
@@ -43,7 +43,7 @@ npx ars-noctis@latest list
 | Profile | 包含内容 | 适用场景 |
 | --- | --- | --- |
 | `core` | `ars`、`noctis` | 需要组合协议与持久 Task DAG |
-| `full` | `ars`、`noctis`、`implement`、`code-review`、`verify` | 安装仓库当前提供的全部 Skill |
+| `full` | `ars`、`noctis`、`spec`、`design`、`implement`、`test`、`code-review`、`verify` | 安装仓库当前提供的全部 Skill |
 
 ```powershell
 npx ars-noctis@latest init --profile full
@@ -55,7 +55,10 @@ npx ars-noctis@latest init --profile full
 | --- | --- |
 | `ars` | provider 发现、manifest 校验及 Noctis Adapter |
 | `noctis` | 通用 Task DAG、状态转换、恢复、claim 与动态扩展 |
+| `spec` | 高效澄清需求并生成边界明确、可验收的需求规格 |
+| `design` | 将明确需求转换为技术设计和可独立验收的任务计划 |
 | `implement` | 独立代码变更 Skill |
+| `test` | 用风险驱动、单元测试优先的方法设计并执行最小充分测试 |
 | `code-review` | 独立只读代码审查 Skill |
 | `verify` | 独立行为验收 Skill |
 
@@ -65,7 +68,11 @@ npx ars-noctis@latest init --profile full
 npx ars-noctis@latest init --skill verify
 ```
 
-Codex App 中这五个 Skill 都只允许 `$skill-name` 显式调用，不会默认注入模型上下文。
+`spec` 与 `design` 没有安装或执行依赖：`design` 可以消费 `spec` 产生的 `requirements.spec` Artifact，也可以直接接受明确的用户请求或现有需求文档。
+
+`test` 可独立接受明确的测试目标，也可以消费需求、设计、实现或审查产物；实现过程中的普通回归仍由 `implement` 负责，既定场景的独立验收仍由 `verify` 负责。
+
+Codex App 中这八个 Skill 都只允许 `$skill-name` 显式调用，不会默认注入模型上下文。
 
 新增 Skill 只需在 `distribution.json` 中声明文件来源、运行时要求和可选自检；Node.js 安装器与 doctor 不为具体 Skill 或 provider 编写分支。
 
@@ -261,13 +268,16 @@ scripts/                 # 仓库级校验工具
 skills/
 ├── ars/                 # Ars manifest 工具与 Noctis Adapter
 ├── noctis/              # 协议无关 Core、公共契约和状态 CLI
+├── spec/                 # 独立需求讨论与规格文档 Skill
+├── design/               # 独立技术设计与任务规划 Skill
 ├── implement/           # 独立代码变更 Skill
+├── test/                # 独立测试方法、测试资产与证据 Skill
 ├── code-review/         # 独立只读审查 Skill
 └── verify/              # 独立行为验收 Skill
 tests/                   # 安装器、仓库契约与范围路由评估测试
 ```
 
-`evals/trigger_queries.json` 保留历史字段名 `should_trigger`，实际评分的是请求是否属于某个 Skill 的职责范围。它不模拟 ChatGPT/Codex App 的自动加载，也不覆盖 `allow_implicit_invocation`；本项目的五个 Skill 均由 metadata 静态校验为仅允许显式调用。需要真实宿主表现时，应在全新 App 任务中做小规模前向测试，不把模型调用放进常规 CI。
+`evals/trigger_queries.json` 保留历史字段名 `should_trigger`，实际评分的是请求是否属于某个 Skill 的职责范围。它不模拟 ChatGPT/Codex App 的自动加载，也不覆盖 `allow_implicit_invocation`；本项目的八个 Skill 均由 metadata 静态校验为仅允许显式调用。需要真实宿主表现时，应在全新 App 任务中做小规模前向测试，不把模型调用放进常规 CI。
 
 ## 开发与发布
 

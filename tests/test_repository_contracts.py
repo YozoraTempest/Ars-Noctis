@@ -10,7 +10,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 ARS = SKILLS / "ars" / "scripts" / "ars.py"
-EXPECTED = {"ars", "noctis", "implement", "code-review", "verify"}
+EXPECTED = {
+    "ars",
+    "noctis",
+    "spec",
+    "design",
+    "implement",
+    "test",
+    "code-review",
+    "verify",
+}
+ATOMIC = ("spec", "design", "implement", "test", "code-review", "verify")
 
 
 class RepositoryContractTests(unittest.TestCase):
@@ -74,7 +84,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("npm publish ./package/ars-noctis-*.tgz", publish)
         self.assertNotRegex(ci + publish, r"uses:\s+[^\s]+@v\d")
 
-    def test_repository_contains_five_independent_skill_entrypoints(self) -> None:
+    def test_repository_contains_eight_independent_skill_entrypoints(self) -> None:
         actual = {
             path.name for path in SKILLS.iterdir() if (path / "SKILL.md").is_file()
         }
@@ -184,7 +194,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertTrue(all(item["kind"] != "ars" for item in core_plan["executors"]))
 
     def test_atomic_skills_do_not_own_orchestration_state(self) -> None:
-        for name in ("implement", "code-review", "verify"):
+        for name in ATOMIC:
             root = SKILLS / name
             instructions = (root / "SKILL.md").read_text(encoding="utf-8")
             with self.subTest(skill=name):
@@ -196,7 +206,7 @@ class RepositoryContractTests(unittest.TestCase):
         provider_contract = (
             SKILLS / "ars" / "references" / "provider-envelope.md"
         ).read_text(encoding="utf-8")
-        for name in ("implement", "code-review", "verify"):
+        for name in ATOMIC:
             root = SKILLS / name
             instructions = (root / "SKILL.md").read_text(encoding="utf-8")
             contract = (root / "references" / "ars-envelope.md").read_text(
