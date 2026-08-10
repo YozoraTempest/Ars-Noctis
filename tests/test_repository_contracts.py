@@ -67,6 +67,7 @@ class RepositoryContractTests(unittest.TestCase):
         )
         self.assertIn("pull_request:", ci)
         self.assertIn("node: [22, 24]", ci)
+        self.assertIn("runs-on: windows-latest", ci)
         self.assertIn("needs: package", publish)
         self.assertEqual(publish.count("id-token: write"), 1)
         self.assertLess(publish.index("publish:"), publish.index("id-token: write"))
@@ -176,6 +177,23 @@ class RepositoryContractTests(unittest.TestCase):
                 self.assertIn("ars.task/v1", instructions)
                 self.assertIn("ars.result/v1", instructions)
                 self.assertFalse(any((root / "scripts").glob("*.py")))
+
+    def test_atomic_skills_carry_self_contained_provider_contract(self) -> None:
+        provider_contract = (
+            SKILLS / "ars" / "references" / "provider-envelope.md"
+        ).read_text(encoding="utf-8")
+        for name in ("implement", "code-review", "verify"):
+            root = SKILLS / name
+            instructions = (root / "SKILL.md").read_text(encoding="utf-8")
+            contract = (root / "references" / "ars-envelope.md").read_text(
+                encoding="utf-8"
+            )
+            with self.subTest(skill=name):
+                self.assertIn(
+                    "[references/ars-envelope.md](references/ars-envelope.md)",
+                    instructions,
+                )
+                self.assertEqual(contract, provider_contract)
 
     def test_openai_metadata_default_prompts_name_the_skill(self) -> None:
         for name in EXPECTED:

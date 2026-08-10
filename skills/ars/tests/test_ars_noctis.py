@@ -182,7 +182,8 @@ class ArsNoctisAdapterTests(unittest.TestCase):
 
         self.assertEqual(runtime.show_run(self.project, None)["runs"], [])
         migrated = adapter.migrate_run(self.project, run_id)
-        self.assertEqual(migrated["target"], str(self.project / ".noctis" / "runs" / run_id))
+        expected_target = (self.project / ".noctis" / "runs" / run_id).resolve()
+        self.assertEqual(migrated["target"], str(expected_target))
         self.checkpoint(".noctis/runs", "test: migrate legacy Run")
         view = runtime.show_run(self.project, run_id)
         self.assertEqual(view["status"], "submitted")
