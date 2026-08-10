@@ -23,6 +23,9 @@ ITEM_ID = re.compile(r"^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 RESULT_STATES = {"blocked", "completed", "failed", "input-required"}
+RUNTIME_FIELDS = {"agent_mode", "model", "reasoning_effort"}
+RUNTIME_SOURCES = {"explicit", "repository", "task", "provider", "run", "agent"}
+AGENT_MODES = {"single", "multi"}
 
 
 class AdapterError(ValueError):
@@ -68,6 +71,12 @@ def exact(value: dict[str, Any], fields: set[str], context: str) -> None:
     unknown = sorted(set(value) - fields)
     if missing:
         raise AdapterError(f"{context} is missing: {', '.join(missing)}")
+    if unknown:
+        raise AdapterError(f"{context} has unknown fields: {', '.join(unknown)}")
+
+
+def only(value: dict[str, Any], fields: set[str], context: str) -> None:
+    unknown = sorted(set(value) - fields)
     if unknown:
         raise AdapterError(f"{context} has unknown fields: {', '.join(unknown)}")
 
@@ -165,6 +174,15 @@ def run_git(
 
 def git_repository(path: Path) -> Path:
     return Path(run_git(path.resolve(), ["rev-parse", "--show-toplevel"]).stdout.strip()).resolve()
+
+
+def app_profile_path(project: Path) -> Path:
+    repository = git_repository(project)
+    raw = run_git(repository, ["rev-parse", "--git-common-dir"]).stdout.strip()
+    common = Path(raw)
+    if not common.is_absolute():
+        common = repository / common
+    return common.resolve() / "ars-noctis" / "app-profile.json"
 
 
 def git_head(path: Path) -> str:
@@ -356,7 +374,309 @@ def validate_task_definition(
     }
 
 
-def executor_for(provider: dict[str, Any]) -> dict[str, Any]:
+def validate_runtime_settings(value: Any, context: str) -> dict[str, str]:
+    settings = object_value(value, context)
+    only(settings, RUNTIME_FIELDS, context)
+    normalized = {
+        field: text_value(settings[field], f"{context}.{field}")
+        for field in sorted(settings)
+    }
+    if "agent_mode" in normalized and normalized["agent_mode"] not in AGENT_MODES:
+        raise AdapterError(f"{context}.agent_mode must be single or multi")
+    return normalized
+
+
+def validate_app_profile(value: Any, context: str = "app profile") -> dict[str, Any]:
+    profile = object_value(value, context)
+    exact(profile, {"schema", "skills"}, context)
+    if profile["schema"] != "ars.app-profile/v1":
+        raise AdapterError(f"{context}.schema must be 'ars.app-profile/v1'")
+    skills = object_value(profile["skills"], f"{context}.skills")
+    normalized = {}
+    for raw_skill, raw_settings in skills.items():
+        skill = identifier(raw_skill, f"{context}.skills key")
+        normalized[skill] = validate_runtime_settings(
+            raw_settings, f"{context}.skills.{skill}"
+        )
+    return {"schema": "ars.app-profile/v1", "skills": normalized}
+
+
+def validate_app_selection(
+    value: Any, schema: str, context: str
+) -> dict[str, Any]:
+    selection = object_value(value, context)
+    exact(selection, {"schema", "default", "providers", "tasks"}, context)
+    if selection["schema"] != schema:
+        raise AdapterError(f"{context}.schema must be '{schema}'")
+    providers = object_value(selection["providers"], f"{context}.providers")
+    tasks = object_value(selection["tasks"], f"{context}.tasks")
+    return {
+        "schema": schema,
+        "default": validate_runtime_settings(
+            selection["default"], f"{context}.default"
+        ),
+        "providers": {
+            identifier(key, f"{context}.providers key"): validate_runtime_settings(
+                settings, f"{context}.providers.{key}"
+            )
+            for key, settings in providers.items()
+        },
+        "tasks": {
+            identifier(key, f"{context}.tasks key"): validate_runtime_settings(
+                settings, f"{context}.tasks.{key}"
+            )
+            for key, settings in tasks.items()
+        },
+    }
+
+
+def empty_app_profile() -> dict[str, Any]:
+    return {"schema": "ars.app-profile/v1", "skills": {}}
+
+
+def empty_app_selection(schema: str) -> dict[str, Any]:
+    return {"schema": schema, "default": {}, "providers": {}, "tasks": {}}
+
+
+def init_app_profile(project: Path, supplied_path: Path | None = None) -> dict[str, Any]:
+    path = supplied_path.resolve() if supplied_path is not None else app_profile_path(project)
+    if path.exists():
+        profile = validate_app_profile(load_json(path))
+        status = "existing"
+    else:
+        profile = empty_app_profile()
+        atomic_write_json(path, profile)
+        status = "created"
+    return {"ok": True, "status": status, "path": str(path), "profile": profile}
+
+
+def show_app_profile(project: Path, supplied_path: Path | None = None) -> dict[str, Any]:
+    path = supplied_path.resolve() if supplied_path is not None else app_profile_path(project)
+    if not path.is_file():
+        raise AdapterError(f"App profile does not exist: {path}")
+    return {
+        "ok": True,
+        "path": str(path),
+        "profile": validate_app_profile(load_json(path)),
+    }
+
+
+def set_app_profile(
+    project: Path,
+    skill: str,
+    *,
+    supplied_path: Path | None = None,
+    agent_mode: str | None = None,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    clear_agent_mode: bool = False,
+    clear_model: bool = False,
+    clear_reasoning_effort: bool = False,
+) -> dict[str, Any]:
+    path = supplied_path.resolve() if supplied_path is not None else app_profile_path(project)
+    profile = validate_app_profile(load_json(path)) if path.is_file() else empty_app_profile()
+    skill_id = identifier(skill, "skill")
+    settings = dict(profile["skills"].get(skill_id, {}))
+    if agent_mode is not None:
+        settings["agent_mode"] = text_value(agent_mode, "agent_mode")
+    if model is not None:
+        settings["model"] = text_value(model, "model")
+    if reasoning_effort is not None:
+        settings["reasoning_effort"] = text_value(reasoning_effort, "reasoning_effort")
+    if clear_agent_mode:
+        settings.pop("agent_mode", None)
+    if clear_model:
+        settings.pop("model", None)
+    if clear_reasoning_effort:
+        settings.pop("reasoning_effort", None)
+    if not any(
+        (
+            agent_mode is not None,
+            model is not None,
+            reasoning_effort is not None,
+            clear_agent_mode,
+            clear_model,
+            clear_reasoning_effort,
+        )
+    ):
+        raise AdapterError("App profile update requires a value or clear option")
+    if settings:
+        profile["skills"][skill_id] = settings
+    else:
+        profile["skills"].pop(skill_id, None)
+    profile = validate_app_profile(profile)
+    atomic_write_json(path, profile)
+    return {"ok": True, "status": "updated", "path": str(path), "profile": profile}
+
+
+def load_app_inputs(
+    project: Path,
+    profile_value: Any | None,
+    run_config_value: Any | None,
+    explicit_config_value: Any | None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    if profile_value is None:
+        path = app_profile_path(project)
+        profile_value = load_json(path) if path.is_file() else empty_app_profile()
+    if run_config_value is None:
+        run_config_value = empty_app_selection("ars.app-run-config/v1")
+    if explicit_config_value is None:
+        explicit_config_value = empty_app_selection("ars.app-explicit-config/v1")
+    return (
+        validate_app_profile(profile_value),
+        validate_app_selection(
+            run_config_value, "ars.app-run-config/v1", "App Run config"
+        ),
+        validate_app_selection(
+            explicit_config_value,
+            "ars.app-explicit-config/v1",
+            "explicit App config",
+        ),
+    )
+
+
+def scoped_settings(selection: dict[str, Any], task: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        selection["tasks"].get(task["id"], {}),
+        selection["providers"].get(task["provider"], {}),
+        selection["default"],
+    ]
+
+
+def resolve_app_runtime(
+    task: dict[str, Any],
+    profile: dict[str, Any],
+    run_config: dict[str, Any],
+    explicit_config: dict[str, Any],
+) -> dict[str, Any]:
+    tiers = [
+        ("explicit", scoped_settings(explicit_config, task)),
+        ("repository", [profile["skills"].get(task["provider"], {})]),
+        ("task", [run_config["tasks"].get(task["id"], {})]),
+        ("provider", [run_config["providers"].get(task["provider"], {})]),
+        ("run", [run_config["default"]]),
+    ]
+    resolved = {}
+    for field in sorted(RUNTIME_FIELDS):
+        fallback = "single" if field == "agent_mode" else "inherit"
+        selection = {"value": fallback, "source": "agent"}
+        for source, settings_list in tiers:
+            matched = next(
+                (settings[field] for settings in settings_list if field in settings),
+                None,
+            )
+            if matched is not None:
+                selection = {"value": matched, "source": source}
+                break
+        resolved[field] = selection
+    return {
+        "schema": "ars.app-runtime/v1",
+        "kind": "codex.app/v1",
+        "agent_mode": resolved["agent_mode"],
+        "model": resolved["model"],
+        "reasoning_effort": resolved["reasoning_effort"],
+    }
+
+
+def validate_app_runtime(value: Any, context: str) -> dict[str, Any]:
+    runtime = object_value(value, context)
+    exact(
+        runtime,
+        {"schema", "kind", "agent_mode", "model", "reasoning_effort"},
+        context,
+    )
+    if runtime["schema"] != "ars.app-runtime/v1" or runtime["kind"] != "codex.app/v1":
+        raise AdapterError(f"{context} is not a supported Codex App runtime")
+    normalized = {"schema": runtime["schema"], "kind": runtime["kind"]}
+    for field in sorted(RUNTIME_FIELDS):
+        selection = object_value(runtime[field], f"{context}.{field}")
+        exact(selection, {"value", "source"}, f"{context}.{field}")
+        value = text_value(selection["value"], f"{context}.{field}.value")
+        source = text_value(selection["source"], f"{context}.{field}.source")
+        if source not in RUNTIME_SOURCES:
+            raise AdapterError(f"{context}.{field}.source is invalid: {source}")
+        if field == "agent_mode" and value not in AGENT_MODES:
+            raise AdapterError(f"{context}.agent_mode.value is invalid: {value}")
+        inherited = "single" if field == "agent_mode" else "inherit"
+        if source == "agent" and value != inherited:
+            raise AdapterError(
+                f"{context}.{field}.value must be {inherited} when source is agent"
+            )
+        normalized[field] = {"value": value, "source": source}
+    return normalized
+
+
+def nullable_text_value(value: Any, context: str) -> str | None:
+    if value is None:
+        return None
+    return text_value(value, context)
+
+
+def validate_app_host(value: Any, context: str = "App host") -> dict[str, Any]:
+    host = object_value(value, context)
+    exact(host, {"schema", "current_agent", "subagents"}, context)
+    if host["schema"] != "ars.app-host/v1":
+        raise AdapterError(f"{context}.schema must be 'ars.app-host/v1'")
+    current = object_value(host["current_agent"], f"{context}.current_agent")
+    exact(
+        current,
+        {"model", "reasoning_effort", "explicit_skills"},
+        f"{context}.current_agent",
+    )
+    subagents = object_value(host["subagents"], f"{context}.subagents")
+    exact(subagents, {"available", "models"}, f"{context}.subagents")
+    if not isinstance(subagents["available"], bool):
+        raise AdapterError(f"{context}.subagents.available must be a boolean")
+    raw_models = subagents["models"]
+    if not isinstance(raw_models, list):
+        raise AdapterError(f"{context}.subagents.models must be a list")
+    models = []
+    seen = set()
+    for index, raw_model in enumerate(raw_models):
+        model_context = f"{context}.subagents.models[{index}]"
+        model = object_value(raw_model, model_context)
+        exact(model, {"id", "reasoning_efforts"}, model_context)
+        model_id = text_value(model["id"], f"{model_context}.id")
+        if model_id == "inherit":
+            raise AdapterError(f"{model_context}.id cannot be inherit")
+        if model_id in seen:
+            raise AdapterError(f"{context}.subagents.models repeats '{model_id}'")
+        seen.add(model_id)
+        efforts = string_list(
+            model["reasoning_efforts"], f"{model_context}.reasoning_efforts"
+        )
+        models.append({"id": model_id, "reasoning_efforts": efforts})
+    explicit_skills = [
+        identifier(skill, f"{context}.current_agent.explicit_skills[{index}]")
+        for index, skill in enumerate(
+            string_list(
+                current["explicit_skills"],
+                f"{context}.current_agent.explicit_skills",
+            )
+        )
+    ]
+    return {
+        "schema": "ars.app-host/v1",
+        "current_agent": {
+            "model": nullable_text_value(
+                current["model"], f"{context}.current_agent.model"
+            ),
+            "reasoning_effort": nullable_text_value(
+                current["reasoning_effort"],
+                f"{context}.current_agent.reasoning_effort",
+            ),
+            "explicit_skills": explicit_skills,
+        },
+        "subagents": {
+            "available": subagents["available"],
+            "models": models,
+        },
+    }
+
+
+def executor_for(
+    provider: dict[str, Any], runtime: dict[str, Any] | None = None
+) -> dict[str, Any]:
     snapshot = {
         "schema": "ars.executor-snapshot/v1",
         "provider": {
@@ -365,22 +685,30 @@ def executor_for(provider: dict[str, Any]) -> dict[str, Any]:
             "capabilities": provider["capabilities"],
         },
     }
+    if runtime is not None:
+        snapshot = {
+            **snapshot,
+            "schema": "ars.executor-snapshot/v2",
+            "runtime": validate_app_runtime(runtime, "runtime"),
+        }
+    digest = canonical_digest(snapshot)
+    suffix = "" if runtime is None else f":{digest.removeprefix('sha256:')[:12]}"
     return {
-        "id": f"ars:{provider['id']}:{provider['version'].replace('.', '-')}",
+        "id": f"ars:{provider['id']}:{provider['version'].replace('.', '-')}{suffix}",
         "kind": "ars",
         "snapshot": snapshot,
-        "digest": canonical_digest(snapshot),
+        "digest": digest,
     }
 
 
 def noctis_task(
-    task: dict[str, Any], workspaces: dict[str, dict[str, str]], provider: dict[str, Any]
+    task: dict[str, Any], workspaces: dict[str, dict[str, str]], executor_id: str
 ) -> dict[str, Any]:
     workspace = workspaces[task["workspace"]]
     return {
         "id": task["id"],
         "needs": task["needs"],
-        "executor": executor_for(provider)["id"],
+        "executor": executor_id,
         "request": {
             "schema": "ars.binding/v1",
             "provider": task["provider"],
@@ -393,6 +721,23 @@ def noctis_task(
         },
         "requirements": task["effects"],
     }
+
+
+def bind_app_executors(
+    tasks: list[dict[str, Any]],
+    providers: dict[str, dict[str, Any]],
+    profile: dict[str, Any],
+    run_config: dict[str, Any],
+    explicit_config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    executors = {}
+    bindings = {}
+    for task in tasks:
+        runtime = resolve_app_runtime(task, profile, run_config, explicit_config)
+        executor = executor_for(providers[task["provider"]], runtime)
+        executors[executor["id"]] = executor
+        bindings[task["id"]] = executor["id"]
+    return [executors[key] for key in sorted(executors)], bindings
 
 
 def validate_task_graph(tasks: list[dict[str, Any]]) -> None:
@@ -423,7 +768,12 @@ def validate_task_graph(tasks: list[dict[str, Any]]) -> None:
 
 
 def adapt_plan(
-    value: Any, project: Path, skill_roots: list[Path]
+    value: Any,
+    project: Path,
+    skill_roots: list[Path],
+    profile_value: Any | None = None,
+    run_config_value: Any | None = None,
+    explicit_config_value: Any | None = None,
 ) -> dict[str, Any]:
     plan = object_value(value, "plan")
     exact(plan, {"schema", "title", "objective", "workspaces", "tasks"}, "plan")
@@ -449,19 +799,28 @@ def adapt_plan(
         for index, item in enumerate(raw_tasks)
     ]
     validate_task_graph(tasks)
-    selected = {task["provider"] for task in tasks}
-    executors = [executor_for(providers[provider_id]) for provider_id in sorted(selected)]
+    profile, run_config, explicit_config = load_app_inputs(
+        project, profile_value, run_config_value, explicit_config_value
+    )
+    executors, bindings = bind_app_executors(
+        tasks, providers, profile, run_config, explicit_config
+    )
     return {
         "schema": "noctis.plan/v1",
         "title": text_value(plan["title"], "plan.title"),
         "objective": text_value(plan["objective"], "plan.objective"),
         "executors": executors,
-        "tasks": [noctis_task(task, workspaces, providers[task["provider"]]) for task in tasks],
+        "tasks": [noctis_task(task, workspaces, bindings[task["id"]]) for task in tasks],
     }
 
 
 def adapt_extension(
-    value: Any, project: Path, skill_roots: list[Path]
+    value: Any,
+    project: Path,
+    skill_roots: list[Path],
+    profile_value: Any | None = None,
+    run_config_value: Any | None = None,
+    explicit_config_value: Any | None = None,
 ) -> dict[str, Any]:
     extension = object_value(value, "extension")
     exact(extension, {"schema", "origin", "workspaces", "tasks"}, "extension")
@@ -488,7 +847,12 @@ def adapt_extension(
         )
         for index, item in enumerate(raw_tasks)
     ]
-    selected = {task["provider"] for task in tasks}
+    profile, run_config, explicit_config = load_app_inputs(
+        project, profile_value, run_config_value, explicit_config_value
+    )
+    executors, bindings = bind_app_executors(
+        tasks, providers, profile, run_config, explicit_config
+    )
     origin = object_value(extension["origin"], "extension.origin")
     exact(origin, {"kind", "summary", "reference"}, "extension.origin")
     reference = origin["reference"]
@@ -501,8 +865,8 @@ def adapt_extension(
             "summary": text_value(origin["summary"], "extension.origin.summary"),
             "reference": reference,
         },
-        "executors": [executor_for(providers[item]) for item in sorted(selected)],
-        "tasks": [noctis_task(task, workspaces, providers[task["provider"]]) for task in tasks],
+        "executors": executors,
+        "tasks": [noctis_task(task, workspaces, bindings[task["id"]]) for task in tasks],
     }
 
 
@@ -555,8 +919,13 @@ def _binding_from_claim(value: Any, project: Path) -> tuple[dict[str, Any], dict
     if canonical_digest(executor["snapshot"]) != executor["digest"]:
         raise AdapterError("claim executor snapshot digest does not match")
     snapshot = object_value(executor["snapshot"], "claim.executor.snapshot")
-    exact(snapshot, {"schema", "provider"}, "claim.executor.snapshot")
-    if snapshot["schema"] != "ars.executor-snapshot/v1":
+    snapshot_schema = snapshot.get("schema")
+    if snapshot_schema == "ars.executor-snapshot/v1":
+        exact(snapshot, {"schema", "provider"}, "claim.executor.snapshot")
+    elif snapshot_schema == "ars.executor-snapshot/v2":
+        exact(snapshot, {"schema", "provider", "runtime"}, "claim.executor.snapshot")
+        validate_app_runtime(snapshot["runtime"], "claim.executor.snapshot.runtime")
+    else:
         raise AdapterError("unsupported Ars executor snapshot")
     provider = object_value(snapshot["provider"], "claim.executor.snapshot.provider")
     exact(provider, {"id", "version", "capabilities"}, "claim.executor.snapshot.provider")
@@ -677,6 +1046,146 @@ def adapt_claim(value: Any, project: Path) -> dict[str, Any]:
         "acceptance": string_list(request["acceptance"], "claim.request.acceptance", nonempty=True),
         "effects": {"required": request["effects"], "granted": request["effects"]},
         "idempotency_key": claim["idempotency_key"],
+    }
+
+
+def claim_app_runtime(claim: dict[str, Any]) -> dict[str, Any]:
+    snapshot = object_value(claim["executor"]["snapshot"], "claim.executor.snapshot")
+    if snapshot["schema"] == "ars.executor-snapshot/v1":
+        return validate_app_runtime(
+            {
+                "schema": "ars.app-runtime/v1",
+                "kind": "codex.app/v1",
+                "agent_mode": {"value": "single", "source": "agent"},
+                "model": {"value": "inherit", "source": "agent"},
+                "reasoning_effort": {"value": "inherit", "source": "agent"},
+            },
+            "legacy Claim runtime",
+        )
+    return validate_app_runtime(snapshot["runtime"], "claim.executor.snapshot.runtime")
+
+
+def dispatch_blocker(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message}
+
+
+def dispatch_claim(
+    claim_value: Any, project: Path, host_value: Any
+) -> dict[str, Any]:
+    claim = object_value(claim_value, "claim")
+    task = adapt_claim(claim, project)
+    host = validate_app_host(host_value)
+    runtime = claim_app_runtime(claim)
+    mode = runtime["agent_mode"]["value"]
+    model = runtime["model"]["value"]
+    effort = runtime["reasoning_effort"]["value"]
+    current = host["current_agent"]
+    available_models = {
+        item["id"]: set(item["reasoning_efforts"])
+        for item in host["subagents"]["models"]
+    }
+    blockers = []
+    spawn = None
+    if mode == "single":
+        if task["provider"]["id"] not in current["explicit_skills"]:
+            blockers.append(
+                dispatch_blocker(
+                    "single-skill-not-explicit",
+                    "single dispatch requires the provider Skill to be explicitly selected in the current App task",
+                )
+            )
+        if model != "inherit" and current["model"] != model:
+            code = (
+                "current-agent-model-unknown"
+                if current["model"] is None
+                else "single-model-mismatch"
+            )
+            blockers.append(
+                dispatch_blocker(
+                    code,
+                    "single dispatch requires the requested model to match the current Agent",
+                )
+            )
+        if effort != "inherit" and current["reasoning_effort"] != effort:
+            code = (
+                "current-agent-reasoning-effort-unknown"
+                if current["reasoning_effort"] is None
+                else "single-reasoning-effort-mismatch"
+            )
+            blockers.append(
+                dispatch_blocker(
+                    code,
+                    "single dispatch requires the requested reasoning effort to match the current Agent",
+                )
+            )
+    else:
+        if not host["subagents"]["available"]:
+            blockers.append(
+                dispatch_blocker(
+                    "subagents-unavailable",
+                    "multi dispatch requires Codex App subagent capability",
+                )
+            )
+        target_model = current["model"] if model == "inherit" else model
+        if model != "inherit" and model not in available_models:
+            blockers.append(
+                dispatch_blocker(
+                    "model-unavailable",
+                    f"subagent model is unavailable: {model}",
+                )
+            )
+        if effort != "inherit":
+            if target_model is None:
+                blockers.append(
+                    dispatch_blocker(
+                        "inherited-model-unknown",
+                        "a concrete reasoning effort with an inherited model requires the current model id",
+                    )
+                )
+            elif model == "inherit" and target_model not in available_models:
+                blockers.append(
+                    dispatch_blocker(
+                        "model-unavailable",
+                        f"subagent model is unavailable: {target_model}",
+                    )
+                )
+            elif target_model in available_models and effort not in available_models[target_model]:
+                blockers.append(
+                    dispatch_blocker(
+                        "reasoning-effort-unavailable",
+                        f"subagent model {target_model} does not support reasoning effort {effort}",
+                    )
+                )
+        if not blockers:
+            skill = task["provider"]["id"]
+            message = (
+                f"Use ${skill} to execute this exact ars.task/v1. "
+                "Return only a valid ars.result/v1 JSON object.\n"
+                + json.dumps(task, ensure_ascii=False, indent=2, sort_keys=True)
+            )
+            spawn = {
+                "fork_turns": "none",
+                "message": message,
+            }
+            if model != "inherit":
+                spawn["model"] = model
+            if effort != "inherit":
+                spawn["reasoning_effort"] = effort
+    skill = task["provider"]["id"]
+    return {
+        "schema": "ars.app-dispatch/v1",
+        "status": "blocked" if blockers else "ready",
+        "mode": mode,
+        "skill": skill,
+        "invocation": f"${skill}",
+        "executor": {
+            "id": claim["executor"]["id"],
+            "digest": claim["executor"]["digest"],
+        },
+        "runtime": runtime,
+        "task": task,
+        "spawn": spawn,
+        "blockers": blockers,
     }
 
 
@@ -813,12 +1322,16 @@ def adapt_legacy_plan(
     ]
     validate_task_graph(tasks)
     selected = {task["provider"] for task in tasks}
+    bindings = {
+        task["id"]: executor_for(providers[task["provider"]])["id"]
+        for task in tasks
+    }
     return {
         "schema": "noctis.plan/v1",
         "title": text_value(plan["title"], "legacy plan.title"),
         "objective": text_value(plan["objective"], "legacy plan.objective"),
         "executors": [executor_for(providers[item]) for item in sorted(selected)],
-        "tasks": [noctis_task(task, workspaces, providers[task["provider"]]) for task in tasks],
+        "tasks": [noctis_task(task, workspaces, bindings[task["id"]]) for task in tasks],
     }
 
 
@@ -964,15 +1477,48 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--project", type=Path, required=True)
     plan.add_argument("--plan", type=Path, required=True)
     plan.add_argument("--skills-root", type=Path, action="append", required=True)
+    plan.add_argument("--app-profile", type=Path)
+    plan.add_argument("--run-config", type=Path)
+    plan.add_argument("--explicit-config", type=Path)
 
     extension = commands.add_parser("extension-adapt")
     extension.add_argument("--project", type=Path, required=True)
     extension.add_argument("--extension", type=Path, required=True)
     extension.add_argument("--skills-root", type=Path, action="append", required=True)
+    extension.add_argument("--app-profile", type=Path)
+    extension.add_argument("--run-config", type=Path)
+    extension.add_argument("--explicit-config", type=Path)
+
+    profile_init = commands.add_parser("app-profile-init")
+    profile_init.add_argument("--project", type=Path, required=True)
+    profile_init.add_argument("--profile", type=Path)
+
+    profile_show = commands.add_parser("app-profile-show")
+    profile_show.add_argument("--project", type=Path, required=True)
+    profile_show.add_argument("--profile", type=Path)
+
+    profile_set = commands.add_parser("app-profile-set")
+    profile_set.add_argument("--project", type=Path, required=True)
+    profile_set.add_argument("--profile", type=Path)
+    profile_set.add_argument("--skill", required=True)
+    mode = profile_set.add_mutually_exclusive_group()
+    mode.add_argument("--agent-mode", choices=sorted(AGENT_MODES))
+    mode.add_argument("--clear-agent-mode", action="store_true")
+    model = profile_set.add_mutually_exclusive_group()
+    model.add_argument("--model")
+    model.add_argument("--clear-model", action="store_true")
+    effort = profile_set.add_mutually_exclusive_group()
+    effort.add_argument("--reasoning-effort")
+    effort.add_argument("--clear-reasoning-effort", action="store_true")
 
     claim = commands.add_parser("claim-adapt")
     claim.add_argument("--project", type=Path, required=True)
     claim.add_argument("--claim", type=Path, required=True)
+
+    dispatch = commands.add_parser("claim-dispatch")
+    dispatch.add_argument("--project", type=Path, required=True)
+    dispatch.add_argument("--claim", type=Path, required=True)
+    dispatch.add_argument("--host", type=Path, required=True)
 
     result = commands.add_parser("result-adapt")
     result.add_argument("--project", type=Path, required=True)
@@ -990,14 +1536,50 @@ def main() -> int:
     try:
         if args.command == "catalog":
             output = discover(args.skills_root)
+        elif args.command == "app-profile-init":
+            output = init_app_profile(args.project, args.profile)
+        elif args.command == "app-profile-show":
+            output = show_app_profile(args.project, args.profile)
+        elif args.command == "app-profile-set":
+            output = set_app_profile(
+                args.project,
+                args.skill,
+                supplied_path=args.profile,
+                agent_mode=args.agent_mode,
+                model=args.model,
+                reasoning_effort=args.reasoning_effort,
+                clear_agent_mode=args.clear_agent_mode,
+                clear_model=args.clear_model,
+                clear_reasoning_effort=args.clear_reasoning_effort,
+            )
         elif args.command == "plan-adapt":
-            output = adapt_plan(load_json(args.plan), args.project, args.skills_root)
+            output = adapt_plan(
+                load_json(args.plan),
+                args.project,
+                args.skills_root,
+                load_json(args.app_profile) if args.app_profile is not None else None,
+                load_json(args.run_config) if args.run_config is not None else None,
+                load_json(args.explicit_config)
+                if args.explicit_config is not None
+                else None,
+            )
         elif args.command == "extension-adapt":
             output = adapt_extension(
-                load_json(args.extension), args.project, args.skills_root
+                load_json(args.extension),
+                args.project,
+                args.skills_root,
+                load_json(args.app_profile) if args.app_profile is not None else None,
+                load_json(args.run_config) if args.run_config is not None else None,
+                load_json(args.explicit_config)
+                if args.explicit_config is not None
+                else None,
             )
         elif args.command == "claim-adapt":
             output = adapt_claim(load_json(args.claim), args.project)
+        elif args.command == "claim-dispatch":
+            output = dispatch_claim(
+                load_json(args.claim), args.project, load_json(args.host)
+            )
         elif args.command == "result-adapt":
             output = adapt_result(
                 load_json(args.claim), load_json(args.result), args.project

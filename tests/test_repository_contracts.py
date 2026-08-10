@@ -164,9 +164,23 @@ class RepositoryContractTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
+        app_run_config = json.loads(
+            (SKILLS / "ars" / "assets" / "app-run-config.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        app_host = json.loads(
+            (SKILLS / "ars" / "assets" / "app-host.example.json").read_text(
+                encoding="utf-8"
+            )
+        )
         self.assertEqual(core_plan["schema"], "noctis.plan/v1")
         self.assertEqual(core_extension["schema"], "noctis.extension/v1")
         self.assertEqual(ars_plan["schema"], "ars.plan/v1")
+        self.assertEqual(app_run_config["schema"], "ars.app-run-config/v1")
+        self.assertEqual(app_run_config["default"]["agent_mode"], "single")
+        self.assertEqual(app_host["schema"], "ars.app-host/v1")
+        self.assertEqual(app_host["current_agent"]["explicit_skills"], ["ars"])
         self.assertTrue(all(item["kind"] != "ars" for item in core_plan["executors"]))
 
     def test_atomic_skills_do_not_own_orchestration_state(self) -> None:
@@ -200,6 +214,7 @@ class RepositoryContractTests(unittest.TestCase):
             content = (SKILLS / name / "agents" / "openai.yaml").read_text(encoding="utf-8")
             with self.subTest(skill=name):
                 self.assertIn(f"${name}", content)
+                self.assertIn("allow_implicit_invocation: false", content)
 
     def test_readme_records_dependency_direction_and_non_goals(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")

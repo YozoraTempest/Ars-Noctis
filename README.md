@@ -60,6 +60,8 @@ npx ars-noctis@latest init --profile full
 npx ars-noctis@latest init --skill verify
 ```
 
+Codex App 中这五个 Skill 都只允许 `$skill-name` 显式调用，不会默认注入模型上下文。
+
 新增 Skill 只需在 `distribution.json` 中声明文件来源、运行时要求和可选自检；Node.js 安装器与 doctor 不为具体 Skill 或 provider 编写分支。
 
 ## 安装器 CLI
@@ -133,12 +135,21 @@ $Noctis = ".agents/skills/noctis/scripts/noctis.py"
 $Skills = ".agents/skills"
 
 python $Ars validate --skill "$Skills/implement"
-python $Adapter plan-adapt --project . --plan "$Skills/ars/assets/noctis-plan.example.json" --skills-root $Skills > noctis-plan.json
+python $Adapter app-profile-init --project .
+python $Adapter plan-adapt --project . --plan "$Skills/ars/assets/noctis-plan.example.json" --skills-root $Skills --run-config "$Skills/ars/assets/app-run-config.example.json" > noctis-plan.json
 python $Noctis plan-check --plan noctis-plan.json
 python $Noctis run-create --project . --plan noctis-plan.json
 ```
 
-Ars Adapter 在数据进入 Core 前校验 provider、capability、effect、workspace 与 Artifact 证据，并冻结实际使用的 executor snapshot。Noctis 只接收通用 JSON。
+Ars Adapter 在数据进入 Core 前校验 provider、capability、effect、workspace 与 Artifact 证据，并冻结实际使用的 executor snapshot。Codex App runtime 按 `显式 > 仓库 profile > Task > Provider > Run > 主 Agent` 逐字段解析模型、推理强度和 `single/multi` Agent 模式；默认是 `single + 继承主 Agent`。Noctis 只接收通用 JSON，不创建 Agent 或调用模型。
+
+个人 profile 保存在 Git common metadata 的 `ars-noctis/app-profile.json`，不会污染工作树。默认空 profile 继承主 Agent；可按 Skill 持久覆盖：
+
+```powershell
+python $Adapter app-profile-set --project . --skill code-review --agent-mode multi --model gpt-5.6-terra --reasoning-effort medium
+```
+
+单个 Skill 直接显式调用时由当前 Agent 执行。Ars Run 领取 Claim 后，主 Agent 把当前 App 能力和用户已显式选择的 Skills 作为临时 `ars.app-host/v1` 交给 `claim-dispatch`：`ready/single` 只执行当前任务已显式选择的 provider；`ready/multi` 按 dispatch 的 `spawn` 参数创建干净上下文的 subagent，并在首条消息显式调用快照指定的 provider Skill。若不希望 provider 内容进入主上下文，应配置 `multi`。当前宿主不支持指定模型或 subagent 时 dispatch 阻塞，不静默换模或回退为独立 CLI 进程。
 
 ## 动态追加 Task
 
@@ -239,7 +250,7 @@ Git 跟踪的追加式 JSON + Git 是持久事实源；`.git/noctis/cache.sqlite
 bin/                     # ars-noctis CLI 入口
 lib/                     # 发行清单、安装事务与运行时诊断
 distribution.json        # Skill、profile、运行时要求与声明式自检
-evals/                   # Skill 触发评估请求
+evals/                   # Skill 职责范围与路由评估请求
 scripts/                 # 仓库级校验工具
 skills/
 ├── ars/                 # Ars manifest 工具与 Noctis Adapter
@@ -247,8 +258,10 @@ skills/
 ├── implement/           # 独立代码变更 Skill
 ├── code-review/         # 独立只读审查 Skill
 └── verify/              # 独立行为验收 Skill
-tests/                   # 安装器、仓库契约与触发评估测试
+tests/                   # 安装器、仓库契约与范围路由评估测试
 ```
+
+`evals/trigger_queries.json` 保留历史字段名 `should_trigger`，实际评分的是请求是否属于某个 Skill 的职责范围。它不模拟 ChatGPT/Codex App 的自动加载，也不覆盖 `allow_implicit_invocation`；本项目的五个 Skill 均由 metadata 静态校验为仅允许显式调用。需要真实宿主表现时，应在全新 App 任务中做小规模前向测试，不把模型调用放进常规 CI。
 
 ## 开发与发布
 

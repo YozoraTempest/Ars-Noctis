@@ -1,0 +1,21 @@
+{
+  "schema": "ars.app-host/v1",
+  "current_agent": {
+    "model": null,
+    "reasoning_effort": null,
+    "explicit_skills": ["ars"]
+  },
+  "subagents": {
+    "available": true,
+    "models": [
+      {
+        "id": "gpt-5.6-sol",
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+      },
+      {
+        "id": "gpt-5.6-terra",
+        "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+      }
+    ]
+  }
+}

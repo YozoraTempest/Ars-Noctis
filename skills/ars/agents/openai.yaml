@@ -2,3 +2,6 @@ interface:
   display_name: "Ars"
   short_description: "维护 Ars 能力契约并适配协议无关的 Noctis"
   default_prompt: "使用 $ars 创建或验证能力清单，并在需要时把 Ars 工作适配到 Noctis。"
+
+policy:
+  allow_implicit_invocation: false

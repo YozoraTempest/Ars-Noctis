@@ -5,9 +5,11 @@
     {"id": "ars-adopt", "skill": "ars", "prompt": "把这个自有 Skill 迁移到新的 Ars manifest；第三方目录不要原地修改。", "should_trigger": true},
     {"id": "ars-validate", "skill": "ars", "prompt": "检查 skills/report-export 的 ars.json 是否符合公开契约。", "should_trigger": true},
     {"id": "ars-noctis-adapt", "skill": "ars", "prompt": "把这份 Ars Plan 转成协议无关的 Noctis Plan，并冻结本次 provider 快照。", "should_trigger": true},
+    {"id": "ars-app-runtime", "skill": "ars", "prompt": "$ars 为当前仓库初始化 Codex App profile，让实现使用主 Agent、审查使用独立 Agent 和指定模型。", "should_trigger": true},
     {"id": "ars-use", "skill": "ars", "prompt": "运行现有 PDF Skill 合并这两个文件。", "should_trigger": false},
     {"id": "ars-code", "skill": "ars", "prompt": "修复报表导出脚本的空指针。", "should_trigger": false},
     {"id": "ars-orchestrate", "skill": "ars", "prompt": "把实现、审查和验收组成一个断线后可恢复的任务图。", "should_trigger": false},
+    {"id": "ars-noctis-only", "skill": "ars", "prompt": "$noctis 只保存这组通用 executor 的 DAG，不发现 provider，也不配置模型。", "should_trigger": false},
 
     {"id": "noctis-explicit", "skill": "noctis", "prompt": "$noctis 为实现、独立审查和行为验收创建一个可恢复 Run。", "should_trigger": true},
     {"id": "noctis-durable", "skill": "noctis", "prompt": "这个工作要跨三个 Skills，依赖结果需要持久化，换会话后还能继续。", "should_trigger": true},

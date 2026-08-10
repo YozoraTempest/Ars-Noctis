@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate repository Skill trigger-evaluation cases."""
+"""Validate repository Skill scope-routing evaluation cases."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ CASES = ROOT / "evals" / "trigger_queries.json"
 def main() -> int:
     value = json.loads(CASES.read_text(encoding="utf-8"))
     if set(value) != {"version", "cases"} or value["version"] != 1:
-        raise ValueError("trigger eval must contain version 1 and cases")
+        raise ValueError("scope-routing eval must contain version 1 and cases")
     skills = {
         path.name for path in (ROOT / "skills").iterdir() if (path / "SKILL.md").is_file()
     }
@@ -40,7 +40,7 @@ def main() -> int:
     ]
     if incomplete:
         raise ValueError("skills need at least two positive and negative cases: " + ", ".join(incomplete))
-    print(f"Validated {len(seen)} trigger evals for {len(skills)} Skills.")
+    print(f"Validated {len(seen)} scope-routing evals for {len(skills)} Skills.")
     return 0
 
 

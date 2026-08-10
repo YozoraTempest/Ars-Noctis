@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run Skill trigger predictions and enforce precision/recall thresholds."""
+"""Score Skill scope-routing predictions with precision/recall thresholds.
+
+The legacy trigger field names describe whether a request belongs to a Skill's
+scope. They do not model host invocation policy or automatic Skill loading.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +27,7 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
     value = json.loads(path.read_text(encoding="utf-8"))
     cases = value.get("cases") if isinstance(value, dict) else None
     if not isinstance(value, dict) or value.get("version") != 1 or not isinstance(cases, list):
-        raise EvaluationError("cases must use trigger evaluation version 1")
+        raise EvaluationError("cases must use scope-routing evaluation version 1")
     return cases
 
 

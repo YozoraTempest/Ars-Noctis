@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run repository-wide Skill, Ars, runtime, trigger, and unittest validation."""
+"""Run repository-wide Skill, Ars, runtime, scope-routing, and unit validation."""
 
 from __future__ import annotations
 

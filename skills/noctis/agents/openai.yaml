@@ -2,3 +2,6 @@ interface:
   display_name: "Noctis"
   short_description: "创建、动态扩展并从 Git 恢复持久 Task DAG"
   default_prompt: "使用 $noctis 创建或继续这个持久任务图，并在运行中按需追加新 Task。"
+
+policy:
+  allow_implicit_invocation: false

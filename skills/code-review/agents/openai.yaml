@@ -2,3 +2,6 @@ interface:
   display_name: "Code Review"
   short_description: "只读审查精确提交或差异，并报告有证据的正确性、安全和回归问题"
   default_prompt: "使用 $code-review 审查这个精确变更并报告有证据的问题。"
+
+policy:
+  allow_implicit_invocation: false
