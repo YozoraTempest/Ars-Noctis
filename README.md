@@ -285,6 +285,15 @@ tests/                   # 安装器、仓库契约与范围路由评估测试
 
 `evals/trigger_queries.json` 保留历史字段名 `should_trigger`，实际评分的是请求是否属于某个 Skill 的职责范围。它不模拟 ChatGPT/Codex App 的自动加载，也不覆盖 `allow_implicit_invocation`；本项目的九个 Skill 均由 metadata 静态校验为仅允许显式调用。需要真实宿主表现时，应在全新 App 任务中做小规模前向测试，不把模型调用放进常规 CI。
 
+`evals/outcome_cases.json` 定义真实前向任务的状态、结论、必要章节、Artifact、副作用、workspace 变化和证据要求。常规 CI 只校验 case 契约，不调用模型；在全新 App 任务中执行 case 后，把观察结果规范化为 version 1 JSON，再离线评分：
+
+```powershell
+python scripts/evaluate_outcomes.py
+python scripts/evaluate_outcomes.py --results path/to/fresh-task-results.json
+```
+
+结果文件为 `{"version":1,"results":[...]}`；每项严格记录 case `id`、`status`、`conclusion`、已交付 `sections` 与 `artifacts`、实际 `effects`、`workspace_changes` 和 `evidence`。可用 `--min-pass-rate` 设置每个 Skill 的最低通过率，未授权副作用和工作区修改仍会进入失败明细。
+
 ## 开发与发布
 
 仓库级验证：

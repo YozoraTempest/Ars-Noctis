@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "diagnose-confirmed-readonly",
+      "skill": "diagnose",
+      "prompt": "调查测试失败的根因，验证导入时缓存环境变量这一假设，不要修改任何文件。",
+      "workspace": "evals/fixtures/diagnose/import-cache",
+      "expected": {
+        "statuses": ["completed"],
+        "conclusions": ["confirmed", "probable"],
+        "required_sections": ["observed", "expected", "reproduction", "hypotheses-tested", "conclusion", "evidence", "impact", "mitigation-options", "residual-uncertainty"],
+        "required_artifacts": ["diagnosis.report"],
+        "allowed_effects": ["command.execute"],
+        "workspace_changes": "forbidden",
+        "minimum_evidence": 2
+      }
+    },
+    {
+      "id": "diagnose-environmental",
+      "skill": "diagnose",
+      "prompt": "调查为什么配置检查只在未设置 SERVICE_URL 的机器失败，区分产品代码、配置和工具链问题。",
+      "workspace": "evals/fixtures/diagnose/environment",
+      "expected": {
+        "statuses": ["completed"],
+        "conclusions": ["environmental", "confirmed"],
+        "required_sections": ["observed", "expected", "reproduction", "conclusion", "evidence", "impact", "residual-uncertainty"],
+        "required_artifacts": ["diagnosis.report"],
+        "allowed_effects": ["command.execute"],
+        "workspace_changes": "forbidden",
+        "minimum_evidence": 2
+      }
+    },
+    {
+      "id": "diagnose-not-reproduced",
+      "skill": "diagnose",
+      "prompt": "有人报告 normalize.py 会丢失空格；在当前基线复现并记录已验证输入。如果无法复现，不要猜测根因。",
+      "workspace": "evals/fixtures/diagnose/not-reproduced",
+      "expected": {
+        "statuses": ["completed"],
+        "conclusions": ["not-reproduced", "unresolved"],
+        "required_sections": ["observed", "expected", "reproduction", "hypotheses-tested", "conclusion", "evidence", "residual-uncertainty"],
+        "required_artifacts": ["diagnosis.report"],
+        "allowed_effects": ["command.execute"],
+        "workspace_changes": "forbidden",
+        "minimum_evidence": 1
+      }
+    },
+    {
+      "id": "diagnose-input-required",
+      "skill": "diagnose",
+      "prompt": "调查金额显示不正确，但需求没有说明货币、舍入规则或期望示例。不要自行发明业务规则。",
+      "workspace": null,
+      "expected": {
+        "statuses": ["input-required"],
+        "conclusions": [null],
+        "required_sections": [],
+        "required_artifacts": [],
+        "allowed_effects": [],
+        "workspace_changes": "forbidden",
+        "minimum_evidence": 0
+      }
+    },
+    {
+      "id": "diagnose-durable-reproducer",
+      "skill": "diagnose",
+      "prompt": "调查导入缓存问题，并在已授权的工作区中创建可复用的最小复现资产。不要修改生产实现。",
+      "workspace": "evals/fixtures/diagnose/import-cache",
+      "expected": {
+        "statuses": ["completed"],
+        "conclusions": ["confirmed", "probable"],
+        "required_sections": ["observed", "expected", "reproduction", "conclusion", "evidence", "residual-uncertainty"],
+        "required_artifacts": ["diagnosis.report", "diagnosis.reproducer"],
+        "allowed_effects": ["command.execute", "git.commit", "workspace.write"],
+        "workspace_changes": "required",
+        "minimum_evidence": 2
+      }
+    },
+    {
+      "id": "diagnose-blocked-environment",
+      "skill": "diagnose",
+      "prompt": "调查仅能在未提供访问权限的生产集群中观察到的故障，不要使用其他环境冒充证据。",
+      "workspace": null,
+      "expected": {
+        "statuses": ["blocked"],
+        "conclusions": [null, "unresolved"],
+        "required_sections": [],
+        "required_artifacts": [],
+        "allowed_effects": [],
+        "workspace_changes": "forbidden",
+        "minimum_evidence": 0
+      }
+    }
+  ]
+}

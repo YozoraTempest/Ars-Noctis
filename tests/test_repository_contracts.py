@@ -105,6 +105,8 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("pull_request:", ci)
         self.assertIn("node: [22, 24]", ci)
         self.assertIn("runs-on: windows-latest", ci)
+        self.assertIn("python scripts/evaluate_outcomes.py", ci)
+        self.assertIn("python scripts/evaluate_outcomes.py", publish)
         self.assertIn("needs: package", publish)
         self.assertEqual(publish.count("id-token: write"), 1)
         self.assertLess(publish.index("publish:"), publish.index("id-token: write"))

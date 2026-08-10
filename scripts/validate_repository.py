@@ -20,6 +20,7 @@ EXAMPLE_PLAN = SKILLS / "noctis" / "assets" / "plan.example.json"
 ARS_EXAMPLE_PLAN = SKILLS / "ars" / "assets" / "noctis-plan.example.json"
 ARS_EXAMPLE_EXTENSION = SKILLS / "ars" / "assets" / "noctis-extension.example.json"
 EVALS = ROOT / "scripts" / "validate_evals.py"
+OUTCOMES = ROOT / "scripts" / "evaluate_outcomes.py"
 PACKAGE_VALIDATOR = ROOT / "scripts" / "validate_package.mjs"
 INSTALLER_TESTS = ROOT / "tests" / "test_installer.mjs"
 
@@ -85,6 +86,7 @@ def main() -> int:
         run([node, str(PACKAGE_VALIDATOR)], env)
         run([node, "--test", str(INSTALLER_TESTS)], env)
         run([python, str(EVALS)], env)
+        run([python, str(OUTCOMES)], env)
         for skill in native:
             run([python, str(ARS), "validate", "--skill", str(skill)], env)
         for skill in skill_directories:

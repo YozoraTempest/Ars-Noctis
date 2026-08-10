@@ -42,6 +42,9 @@ jobs:
       - name: Validate trigger evaluations
         run: python scripts/validate_evals.py
 
+      - name: Validate outcome evaluations
+        run: python scripts/evaluate_outcomes.py
+
       - name: Run repository contract tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
