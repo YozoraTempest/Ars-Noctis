@@ -15,12 +15,21 @@ EXPECTED = {
     "noctis",
     "spec",
     "design",
+    "diagnose",
     "implement",
     "test",
     "code-review",
     "verify",
 }
-ATOMIC = ("spec", "design", "implement", "test", "code-review", "verify")
+ATOMIC = (
+    "spec",
+    "design",
+    "diagnose",
+    "implement",
+    "test",
+    "code-review",
+    "verify",
+)
 
 
 class RepositoryContractTests(unittest.TestCase):
@@ -35,6 +44,24 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertNotIn("dependencies", package)
         self.assertEqual(distribution["schema"], "ars-noctis.distribution/v1")
         self.assertEqual(distribution["profiles"]["core"], ["ars", "noctis"])
+        self.assertEqual(
+            distribution["profiles"]["engineering"],
+            ["diagnose", "implement", "test", "code-review", "verify"],
+        )
+        self.assertEqual(
+            distribution["profiles"]["full"],
+            [
+                "ars",
+                "noctis",
+                "spec",
+                "design",
+                "diagnose",
+                "implement",
+                "test",
+                "code-review",
+                "verify",
+            ],
+        )
         self.assertEqual(
             {item["id"] for item in distribution["skills"]}, EXPECTED
         )
@@ -84,7 +111,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertIn("npm publish ./package/ars-noctis-*.tgz", publish)
         self.assertNotRegex(ci + publish, r"uses:\s+[^\s]+@v\d")
 
-    def test_repository_contains_eight_independent_skill_entrypoints(self) -> None:
+    def test_repository_contains_nine_independent_skill_entrypoints(self) -> None:
         actual = {
             path.name for path in SKILLS.iterdir() if (path / "SKILL.md").is_file()
         }
@@ -93,6 +120,20 @@ class RepositoryContractTests(unittest.TestCase):
             with self.subTest(skill=name):
                 self.assertTrue((SKILLS / name / "agents" / "openai.yaml").is_file())
         self.assertFalse((SKILLS / "noctis" / "ars.json").exists())
+
+    def test_diagnose_is_a_standalone_provider(self) -> None:
+        instructions = (SKILLS / "diagnose" / "SKILL.md").read_text(encoding="utf-8")
+        manifest = json.loads(
+            (SKILLS / "diagnose" / "ars.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("独立调用时直接交付诊断结论", instructions)
+        self.assertIn("Task 可以没有前置 Artifact", instructions)
+        self.assertNotIn("调用 Implement", instructions)
+        self.assertNotIn("进入下一阶段", instructions)
+        self.assertEqual(
+            [item["id"] for item in manifest["capabilities"]],
+            ["software.diagnose"],
+        )
 
     def test_every_manifest_validates_through_public_cli(self) -> None:
         for name in EXPECTED - {"noctis"}:

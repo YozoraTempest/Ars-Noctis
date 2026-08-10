@@ -7,11 +7,19 @@
       "ars",
       "noctis"
     ],
+    "engineering": [
+      "diagnose",
+      "implement",
+      "test",
+      "code-review",
+      "verify"
+    ],
     "full": [
       "ars",
       "noctis",
       "spec",
       "design",
+      "diagnose",
       "implement",
       "test",
       "code-review",
@@ -73,6 +81,10 @@
     {
       "id": "design",
       "source": "skills/design"
+    },
+    {
+      "id": "diagnose",
+      "source": "skills/diagnose"
     },
     {
       "id": "implement",

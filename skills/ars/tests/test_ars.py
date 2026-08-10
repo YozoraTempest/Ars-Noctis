@@ -31,6 +31,7 @@ class ArsContractTests(unittest.TestCase):
             "ars",
             "spec",
             "design",
+            "diagnose",
             "implement",
             "test",
             "code-review",

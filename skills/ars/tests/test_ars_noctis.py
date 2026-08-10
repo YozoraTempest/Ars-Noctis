@@ -115,7 +115,16 @@ class ArsNoctisAdapterTests(unittest.TestCase):
         catalog = adapter.discover([SKILLS_ROOT])
         self.assertEqual(
             {provider["id"] for provider in catalog["providers"]},
-            {"ars", "spec", "design", "implement", "test", "code-review", "verify"},
+            {
+                "ars",
+                "spec",
+                "design",
+                "diagnose",
+                "implement",
+                "test",
+                "code-review",
+                "verify",
+            },
         )
         plan = adapter.adapt_plan(self.ars_plan(), self.project, [SKILLS_ROOT])
         normalized = contracts.validate_plan(plan)

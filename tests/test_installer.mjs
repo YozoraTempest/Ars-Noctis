@@ -90,7 +90,7 @@ test('distribution exposes declarative profiles and independent skills', () => {
   assert.deepEqual(distribution.profiles.core, ['ars', 'noctis']);
   assert.deepEqual(
     distribution.skills.map((skill) => skill.id),
-    ['ars', 'noctis', 'spec', 'design', 'implement', 'test', 'code-review', 'verify'],
+    ['ars', 'noctis', 'spec', 'design', 'diagnose', 'implement', 'test', 'code-review', 'verify'],
   );
   assert.deepEqual(
     selectSkills(distribution, { skillIds: ['verify'] }).map((skill) => skill.id),
@@ -100,6 +100,35 @@ test('distribution exposes declarative profiles and independent skills', () => {
   assert.deepEqual(distribution.byId.get('noctis').requires.pythonModules, ['sqlite3']);
   assert.deepEqual(distribution.byId.get('verify').requires.executables, []);
   assert.deepEqual(distribution.byId.get('ars').checks.map((check) => check.id), ['manifest']);
+});
+
+test('engineering profile installs standalone engineering skills', async (t) => {
+  const { installation } = await context(t);
+  const skills = selectSkills(distribution, { profile: 'engineering' });
+  const result = await installSkills({ distribution, installation, skills });
+  assert.deepEqual(
+    result.actions.map((action) => action.skill),
+    ['diagnose', 'implement', 'test', 'code-review', 'verify'],
+  );
+  assert.equal(
+    (await readFile(path.join(installation.skillsRoot, 'diagnose', 'SKILL.md'), 'utf8'))
+      .includes('name: diagnose'),
+    true,
+  );
+  await assert.rejects(readFile(path.join(installation.skillsRoot, 'ars', 'SKILL.md')));
+  await assert.rejects(readFile(path.join(installation.skillsRoot, 'noctis', 'SKILL.md')));
+});
+
+test('diagnose installs without orchestration or sibling skills', async (t) => {
+  const { installation } = await context(t);
+  const skills = selectSkills(distribution, { skillIds: ['diagnose'] });
+  const result = await installSkills({ distribution, installation, skills });
+  assert.deepEqual(result.actions.map((action) => action.skill), ['diagnose']);
+  const snapshot = await installationSnapshot({ distribution, installation });
+  assert.deepEqual(
+    snapshot.skills.filter((skill) => skill.installed).map((skill) => skill.id),
+    ['diagnose'],
+  );
 });
 
 test('init wizard runs only for an unconfigured human TTY', () => {
@@ -141,7 +170,7 @@ test('init wizard runs only for an unconfigured human TTY', () => {
 });
 
 test('init wizard selects profiles, destination, and confirmation', async () => {
-  const wizard = scriptedWizard(['2', '', '']);
+  const wizard = scriptedWizard(['3', '', '']);
   const selection = await promptInitOptions({
     distribution,
     project: ROOT,
@@ -153,7 +182,7 @@ test('init wizard selects profiles, destination, and confirmation', async () => 
   assert.deepEqual(selection.skillIds, []);
   assert.deepEqual(
     selection.selectedSkillIds,
-    ['ars', 'noctis', 'spec', 'design', 'implement', 'test', 'code-review', 'verify'],
+    ['ars', 'noctis', 'spec', 'design', 'diagnose', 'implement', 'test', 'code-review', 'verify'],
   );
   assert.equal(selection.skillsDirectory, DEFAULT_SKILLS_DIRECTORY);
   assert.match(wizard.output(), /Installation plan:/);
@@ -281,7 +310,7 @@ test('full profile installs every currently declared skill', async (t) => {
   const result = await installSkills({ distribution, installation, skills });
   assert.deepEqual(
     result.actions.map((action) => action.skill),
-    ['ars', 'noctis', 'spec', 'design', 'implement', 'test', 'code-review', 'verify'],
+    ['ars', 'noctis', 'spec', 'design', 'diagnose', 'implement', 'test', 'code-review', 'verify'],
   );
   const snapshot = await installationSnapshot({ distribution, installation });
   assert.equal(snapshot.skills.every((skill) => skill.installed), true);
