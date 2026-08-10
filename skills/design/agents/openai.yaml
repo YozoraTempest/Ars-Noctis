@@ -1,0 +1,7 @@
+interface:
+  display_name: "Design"
+  short_description: "将明确需求转换为仓库感知的技术设计和可独立验收的实现任务计划"
+  default_prompt: "使用 $design 将这项明确需求形成具体技术设计和任务计划。"
+
+policy:
+  allow_implicit_invocation: false
