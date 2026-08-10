@@ -149,14 +149,13 @@ Noctis 不执行 executor，也不调用模型。调用方负责领取 Task、�
 ```powershell
 $Ars = ".agents/skills/ars/scripts/ars.py"
 $Adapter = ".agents/skills/ars/scripts/ars_noctis.py"
+$Host = ".agents/skills/ars/scripts/ars_host.py"
 $Noctis = ".agents/skills/noctis/scripts/noctis.py"
 $Skills = ".agents/skills"
 
 python $Ars validate --skill "$Skills/implement"
 python $Adapter app-profile-init --project .
-python $Adapter plan-adapt --project . --plan "$Skills/ars/assets/noctis-plan.example.json" --skills-root $Skills --run-config "$Skills/ars/assets/app-run-config.example.json" > noctis-plan.json
-python $Noctis plan-check --plan noctis-plan.json
-python $Noctis run-create --project . --plan noctis-plan.json
+python $Host create --project . --plan "$Skills/ars/assets/noctis-plan.example.json" --skills-root $Skills --noctis $Noctis --run-config "$Skills/ars/assets/app-run-config.example.json"
 ```
 
 Ars Adapter 在数据进入 Core 前校验 provider、capability、effect、workspace 与 Artifact 证据，并冻结实际使用的 executor snapshot。Codex App runtime 按 `显式 > 仓库 profile > Task > Provider > Run > 主 Agent` 逐字段解析模型、推理强度和 `single/multi` Agent 模式；默认是 `single + 继承主 Agent`。Noctis 只接收通用 JSON，不创建 Agent 或调用模型。
@@ -167,7 +166,7 @@ Ars Adapter 在数据进入 Core 前校验 provider、capability、effect、work
 python $Adapter app-profile-set --project . --skill code-review --agent-mode multi --model gpt-5.6-terra --reasoning-effort medium
 ```
 
-单个 Skill 直接显式调用时由当前 Agent 执行。Ars Run 领取 Claim 后，主 Agent 把当前 App 能力和用户已显式选择的 Skills 作为临时 `ars.app-host/v1` 交给 `claim-dispatch`：`ready/single` 只执行当前任务已显式选择的 provider；`ready/multi` 按 dispatch 的 `spawn` 参数创建干净上下文的 subagent，并在首条消息显式调用快照指定的 provider Skill。若不希望 provider 内容进入主上下文，应配置 `multi`。当前宿主不支持指定模型或 subagent 时 dispatch 阻塞，不静默换模或回退为独立 CLI 进程。
+单个 Skill 直接显式调用时由当前 Agent 执行。提交 Run checkpoint 后，主 Agent 用 `ars_host.py next` 领取首个 ready Task；完整 Claim 留在 Git common metadata，返回值只包含适配后的 dispatch。`ready/single` 只执行当前任务已显式选择的 provider；`ready/multi` 按 dispatch 的 `spawn` 参数创建干净上下文的 subagent。provider 返回 `ars.result/v1` 后用 `ars_host.py finish` 完成 Task。当前宿主不支持指定模型或 subagent 时 dispatch 阻塞，不静默换模或回退为独立 CLI 进程。
 
 ## 动态追加 Task
 

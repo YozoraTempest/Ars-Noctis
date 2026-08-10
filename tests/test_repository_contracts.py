@@ -179,13 +179,16 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertFalse((scripts / "noctis_runtime.py").exists())
 
     def test_ars_adapter_uses_public_json_not_noctis_internals(self) -> None:
-        adapter = (SKILLS / "ars" / "scripts" / "ars_noctis.py").read_text(
-            encoding="utf-8"
+        scripts = SKILLS / "ars" / "scripts"
+        sources = "\n".join(
+            (scripts / name).read_text(encoding="utf-8")
+            for name in ("ars_noctis.py", "ars_host.py")
         )
-        self.assertNotIn("noctislib", adapter)
-        self.assertNotIn("skills/noctis", adapter.replace("\\", "/"))
-        self.assertIn("noctis.plan/v1", adapter)
-        self.assertIn("noctis.extension/v1", adapter)
+        self.assertNotIn("noctislib", sources)
+        self.assertNotIn("skills/noctis", sources.replace("\\", "/"))
+        self.assertIn("noctis.plan/v1", sources)
+        self.assertIn("noctis.extension/v1", sources)
+        self.assertIn("task-claim", sources)
 
     def test_noctis_owns_generic_git_state_and_dynamic_extension(self) -> None:
         instructions = (SKILLS / "noctis" / "SKILL.md").read_text(encoding="utf-8")

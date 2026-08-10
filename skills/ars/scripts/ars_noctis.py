@@ -176,13 +176,17 @@ def git_repository(path: Path) -> Path:
     return Path(run_git(path.resolve(), ["rev-parse", "--show-toplevel"]).stdout.strip()).resolve()
 
 
-def app_profile_path(project: Path) -> Path:
+def git_common_directory(project: Path) -> Path:
     repository = git_repository(project)
     raw = run_git(repository, ["rev-parse", "--git-common-dir"]).stdout.strip()
     common = Path(raw)
     if not common.is_absolute():
         common = repository / common
-    return common.resolve() / "ars-noctis" / "app-profile.json"
+    return common.resolve()
+
+
+def app_profile_path(project: Path) -> Path:
+    return git_common_directory(project) / "ars-noctis" / "app-profile.json"
 
 
 def git_head(path: Path) -> str:

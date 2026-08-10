@@ -33,6 +33,22 @@ python scripts/ars_noctis.py plan-adapt --project <project> --plan <ars-plan.jso
 
 输出可直接交给 `noctis.py plan-check` 和 `run-create`。
 
+## Compact Host
+
+常规生命周期可用三个高层命令完成，Noctis 路径必须显式提供：
+
+```powershell
+python scripts/ars_host.py create --project <project> --plan <ars-plan.json> --skills-root <skills-root> --noctis <noctis.py>
+# 提交 create 返回的 checkpoint 后再领取 Task
+python scripts/ars_host.py next --project <project> --run-id <uuid> --host <app-host.json> --noctis <noctis.py> > <app-dispatch.json>
+# 执行 dispatch 指定的 provider，得到 ars-result.json
+python scripts/ars_host.py finish --project <project> --result <ars-result.json> --noctis <noctis.py>
+```
+
+`create` 在临时目录中完成 Plan 适配与 Noctis 校验，不保留中间 JSON。`next` 让 Noctis 领取指定 Task；省略 `--task-id` 时领取首个 ready Task。完整 `noctis.claim/v1` 保存在 `<git-common-dir>/ars-noctis/claims/<claim-id>.json`，不进入工作树、Git 历史或 Agent 提示；Agent 只接收适配后的 `ars.app-dispatch/v1`。
+
+`finish` 根据 `ars.result/v1` 的 `claim_id` 读取本机 Claim，校验并提交 Noctis Result。只有 Noctis 成功完成 Task 后才删除 Claim 缓存；校验、revision 或 checkpoint 失败时保留缓存供修正后重试。宿主只调用 Noctis 公共 CLI，不导入 Noctis 内部模块、不调用模型，也不自动提交 checkpoint。
+
 ## Codex App Runtime
 
 个人 profile 默认保存在 `<git-common-dir>/ars-noctis/app-profile.json`，因此跨同一仓库的 worktree 持久存在，但不进入工作树或 Git 历史。初始化内容为空，表示默认继承主 Agent：
@@ -154,6 +170,8 @@ python <noctis>/scripts/noctis.py run-extend --project <project> --run-id <uuid>
 Adapter 会携带扩展中使用的 provider 快照。Noctis 若已有完全相同的 executor 会去重；版本或快照改变时使用新的 executor ID，不修改旧快照。
 
 ## Claim and Result
+
+以下低层命令用于调试、迁移或需要调用方自行保管 Claim 的集成；普通生命周期优先使用 `ars_host.py`：
 
 ```powershell
 python <noctis>/scripts/noctis.py task-claim --project <project> --run-id <uuid> --task-id <id> > <noctis-claim.json>
