@@ -30,17 +30,7 @@ description: 使用风险驱动、证据导向且单元测试优先的方法设�
 
 ## Behavior Contract
 
-仅在新建或修改的测试保护已确认的重要业务规则、高价值回归或架构约束时添加 Behavior Contract。普通工具函数、显而易见的输入输出和无长期契约价值的测试使用清晰名称即可；不要批量改写无关历史测试。
-
-需要 Contract 时紧邻测试声明记录以下内容，并确保每个结果都有真实断言：
-
-- `Summary`：行为结果及业务意义。
-- `Feature`、`Business Rule`、`Scenario`：稳定领域语义，不写文件名、任务 ID 或实现方案。
-- `WHEN`、`THEN` 和必要的 `AND`：触发条件与实际断言的可观察结果。
-- `Test Boundary`：测试实际经过的公开边界。
-- `Not Covered`：该测试不能证明的具体风险；不得用空泛措辞掩盖边界。
-
-如果规则需要真实数据库、框架装配、跨服务协议或浏览器才能证明，选择相应等级或明确保留风险，不为套用 Contract 制造虚假单元测试。
+仅在测试保护已确认的重要业务规则、高价值回归或架构约束时添加 Contract；普通工具函数和无长期契约价值的测试使用清晰名称即可。需要新增或审查 Contract 时读取 [references/behavior-contract.md](references/behavior-contract.md)，不要批量改写无关历史测试。
 
 ## 职责边界
 

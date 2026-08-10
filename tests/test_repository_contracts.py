@@ -137,6 +137,15 @@ class RepositoryContractTests(unittest.TestCase):
             ["software.diagnose"],
         )
 
+    def test_large_entrypoints_defer_only_optional_detail(self) -> None:
+        ars = (SKILLS / "ars" / "SKILL.md").read_text(encoding="utf-8")
+        testing = (SKILLS / "test" / "SKILL.md").read_text(encoding="utf-8")
+        diagnose = (SKILLS / "diagnose" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("references/noctis-adapter.md", ars)
+        self.assertIn("references/behavior-contract.md", testing)
+        self.assertIn("竞争假设", diagnose)
+        self.assertIn("hypotheses-tested", diagnose)
+
     def test_every_manifest_validates_through_public_cli(self) -> None:
         for name in EXPECTED - {"noctis"}:
             result = subprocess.run(
