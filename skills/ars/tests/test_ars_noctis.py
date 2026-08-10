@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
-import tempfile
 import unittest
 import uuid
 from pathlib import Path
@@ -14,45 +12,17 @@ REPOSITORY_ROOT = SKILL_ROOT.parents[1]
 SKILLS_ROOT = REPOSITORY_ROOT / "skills"
 ARS_SCRIPT_ROOT = SKILL_ROOT / "scripts"
 NOCTIS_SCRIPT_ROOT = SKILLS_ROOT / "noctis" / "scripts"
+TEST_SUPPORT_ROOT = REPOSITORY_ROOT / "tests"
 sys.path.insert(0, str(ARS_SCRIPT_ROOT))
 sys.path.insert(0, str(NOCTIS_SCRIPT_ROOT))
+sys.path.insert(0, str(TEST_SUPPORT_ROOT))
 
 import ars_noctis as adapter  # noqa: E402
+from git_fixture import GitRepositoryTestCase  # noqa: E402
 from noctislib import contracts, runtime  # noqa: E402
 
 
-class ArsNoctisAdapterTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.project = Path(self.temporary.name) / "project"
-        self.project.mkdir()
-        self.git("init", "-b", "main")
-        self.git("config", "user.email", "adapter@example.test")
-        self.git("config", "user.name", "Adapter Test")
-        (self.project / "base.txt").write_text("base\n", encoding="utf-8")
-        self.git("add", "base.txt")
-        self.git("commit", "-m", "test: initialize repository")
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
-
-    def git(self, *arguments: str) -> str:
-        result = subprocess.run(
-            ["git", *arguments],
-            cwd=self.project,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout.strip()
-
-    def write_json(self, name: str, value: object) -> Path:
-        path = Path(self.temporary.name) / "fixtures" / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value), encoding="utf-8")
-        return path
-
+class ArsNoctisAdapterTests(GitRepositoryTestCase):
     @staticmethod
     def ars_plan(provider: str = "code-review", capability: str = "code.review") -> dict[str, object]:
         return {

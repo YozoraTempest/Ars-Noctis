@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -13,43 +10,15 @@ REPOSITORY_ROOT = SKILL_ROOT.parents[1]
 SKILLS_ROOT = REPOSITORY_ROOT / "skills"
 ARS_SCRIPT_ROOT = SKILL_ROOT / "scripts"
 NOCTIS_CLI = SKILLS_ROOT / "noctis" / "scripts" / "noctis.py"
+TEST_SUPPORT_ROOT = REPOSITORY_ROOT / "tests"
 sys.path.insert(0, str(ARS_SCRIPT_ROOT))
+sys.path.insert(0, str(TEST_SUPPORT_ROOT))
 
 import ars_host as host  # noqa: E402
+from git_fixture import GitRepositoryTestCase  # noqa: E402
 
 
-class ArsHostTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
-        self.project = self.root / "project"
-        self.project.mkdir()
-        self.git("init", "-b", "main")
-        self.git("config", "user.email", "host@example.test")
-        self.git("config", "user.name", "Host Test")
-        (self.project / "base.txt").write_text("base\n", encoding="utf-8")
-        self.git("add", "base.txt")
-        self.git("commit", "-m", "test: initialize repository")
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
-
-    def git(self, *arguments: str) -> str:
-        result = subprocess.run(
-            ["git", *arguments],
-            cwd=self.project,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout.strip()
-
-    def write_json(self, name: str, value: object) -> Path:
-        path = self.root / name
-        path.write_text(json.dumps(value), encoding="utf-8")
-        return path
-
+class ArsHostTests(GitRepositoryTestCase):
     def test_create_next_finish_uses_public_noctis_cli_and_local_claim_cache(self) -> None:
         plan_path = self.write_json(
             "plan.json",

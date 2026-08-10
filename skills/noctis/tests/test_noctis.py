@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -12,8 +11,12 @@ from pathlib import Path
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_ROOT = SKILL_ROOT / "scripts"
 SCRIPT = SCRIPT_ROOT / "noctis.py"
+REPOSITORY_ROOT = SKILL_ROOT.parents[1]
+TEST_SUPPORT_ROOT = REPOSITORY_ROOT / "tests"
 sys.path.insert(0, str(SCRIPT_ROOT))
+sys.path.insert(0, str(TEST_SUPPORT_ROOT))
 
+from git_fixture import GitRepositoryTestCase  # noqa: E402
 from noctislib import contracts, runtime, state  # noqa: E402
 
 
@@ -72,38 +75,7 @@ class StateReducerTests(unittest.TestCase):
         self.assertEqual(tasks["second"]["added_revision"], 1)
 
 
-class NoctisRuntimeTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.project = Path(self.temporary.name) / "project"
-        self.project.mkdir()
-        self.git("init", "-b", "main")
-        self.git("config", "user.email", "noctis@example.test")
-        self.git("config", "user.name", "Noctis Test")
-        (self.project / "base.txt").write_text("base\n", encoding="utf-8")
-        self.git("add", "base.txt")
-        self.git("commit", "-m", "test: initialize repository")
-
-    def tearDown(self) -> None:
-        self.temporary.cleanup()
-
-    def git(self, *arguments: str, cwd: Path | None = None) -> str:
-        result = subprocess.run(
-            ["git", *arguments],
-            cwd=cwd or self.project,
-            encoding="utf-8",
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return result.stdout.strip()
-
-    def write_json(self, name: str, value: object) -> Path:
-        path = Path(self.temporary.name) / "fixtures" / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(value), encoding="utf-8")
-        return path
-
+class NoctisRuntimeTests(GitRepositoryTestCase):
     @staticmethod
     def executor(executor_id: str = "local:worker:1") -> dict[str, object]:
         snapshot = {"protocol": "test.executor/v1", "name": executor_id}
