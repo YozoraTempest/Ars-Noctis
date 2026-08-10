@@ -1,0 +1,7 @@
+interface:
+  display_name: "Spec"
+  short_description: "高效讨论并澄清产品或工程需求，生成边界清楚且可验收的需求规格文档"
+  default_prompt: "使用 $spec 澄清这项需求并生成可验收的需求文档。"
+
+policy:
+  allow_implicit_invocation: false
