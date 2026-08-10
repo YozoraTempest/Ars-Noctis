@@ -23,4 +23,6 @@ description: 按明确场景执行可观察的行为验收、集成检查或证�
 - effect receipt 只记录实际发生且 Task 已授权的命令、workspace 写入或网络写入。
 - 任一必要场景失败时返回 `failed`；需要用户判定时返回 `input-required`；环境或权限缺失时返回 `blocked`。
 
+解析 Task 或构造 Result 前读取 [references/ars-envelope.md](references/ars-envelope.md)，严格复制关联字段并只返回契约允许的字段。
+
 独立调用时直接报告验收结果，不创建 Noctis 状态、不提交证据、不推送或部署。

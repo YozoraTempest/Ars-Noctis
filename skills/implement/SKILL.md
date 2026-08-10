@@ -22,4 +22,6 @@ description: 在软件仓库中实现已明确范围的代码、配置或迁移�
 - 使用稳定 `idempotency_key` 关联可能重复的外部或提交操作；恢复时先核对当前事实，不盲目重放。
 - 返回 `ars.result/v1`，用 Artifact 表达可组合产物，用 evidence 表达验证证据，用 effect receipt 记录实际副作用。不要直接修改 Noctis 数据库或其他 Skill 的私有文件。
 
+解析 Task 或构造 Result 前读取 [references/ars-envelope.md](references/ars-envelope.md)，严格复制关联字段并只返回契约允许的字段。
+
 独立调用时直接向用户交付结果，不创建 Noctis 状态。

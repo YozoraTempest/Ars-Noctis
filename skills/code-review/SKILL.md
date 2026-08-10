@@ -23,4 +23,6 @@ description: 对指定提交、差异或变更集执行只读代码审查，优�
 - 以 evidence 记录实际检查的 revision、命令或报告。
 - 工具不可用或 revision 不可达时返回 `blocked`，不要把未执行检查描述为通过。
 
+解析 Task 或构造 Result 前读取 [references/ars-envelope.md](references/ars-envelope.md)，严格复制关联字段并只返回契约允许的字段。
+
 不要直接修改业务代码、Noctis 数据库或其他 Skill 的记录。

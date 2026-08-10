@@ -1,7 +1,7 @@
 {
   "schema": "ars.skill/v1",
   "id": "ars",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "capabilities": [
     {
       "id": "ars.author",

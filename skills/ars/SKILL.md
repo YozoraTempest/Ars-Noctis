@@ -9,7 +9,7 @@ description: 创建、迁移、检查或验证带 ars.json 能力清单的 Agent
 
 ## 工作流
 
-1. 阅读目标仓库规则和目标 Skill 的全部现有内容。用至少两个真实正向请求和两个相邻负向请求确认能力、非目标与触发边界。
+1. 阅读目标仓库规则、目标 `SKILL.md`、已有 `ars.json` 和本次工作直接需要的引用。不要预加载无关脚本、测试或资产；用至少两个真实正向请求和两个相邻负向请求确认能力、非目标与触发边界。
 2. 新建 Skill 时使用当前宿主提供的官方初始化工具；修改现有 Skill 时保留其公开行为，除非用户明确允许破坏性重构。
 3. 先完成标准 `SKILL.md`，再仅为可组合能力创建 `ars.json`。每个 capability 只声明稳定 ID、Task/Result envelope 版本和可能副作用。
 4. 运行 `scripts/ars.py validate --skill <目录>`。再运行宿主的官方 Skill 快速校验和至少一个代表性用例。
@@ -31,4 +31,4 @@ description: 创建、迁移、检查或验证带 ars.json 能力清单的 Agent
 - 不在 manifest 中声明模板、内部状态文件、脚本路径或其他 Skill 的安装路径。
 - 不为只需独立调用、没有组合需求的 Skill 强行增加 Ars manifest。
 
-运行命令与完整字段见 `scripts/ars.py --help`。需要编写或审查 manifest 时读取 [references/manifest.md](references/manifest.md)；需要连接 Noctis 或迁移旧 Run 时读取 [references/noctis-adapter.md](references/noctis-adapter.md)。
+运行命令与完整字段见 `scripts/ars.py --help`。需要编写或审查 manifest 时读取 [references/manifest.md](references/manifest.md)；需要让 provider 收发 Ars envelope 时读取 [references/provider-envelope.md](references/provider-envelope.md)；需要连接 Noctis 或迁移旧 Run 时读取 [references/noctis-adapter.md](references/noctis-adapter.md)。

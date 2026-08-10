@@ -1,7 +1,7 @@
 {
   "schema": "ars.skill/v1",
   "id": "implement",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "capabilities": [
     {
       "id": "code.change",
