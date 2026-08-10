@@ -107,3 +107,29 @@ jobs:
       - name: Publish package
         shell: bash
         run: npm publish ./package/ars-noctis-*.tgz --access public --ignore-scripts
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    steps:
+      - name: Create GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists."
+            exit 0
+          fi
+
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "Ars-Noctis $GITHUB_REF_NAME" \
+            --notes "npm package: https://www.npmjs.com/package/ars-noctis/v/$version" \
+            --generate-notes
