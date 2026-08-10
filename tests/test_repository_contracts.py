@@ -41,6 +41,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertEqual(package["name"], "ars-noctis")
         self.assertEqual(package["bin"], {"ars-noctis": "bin/ars-noctis.mjs"})
         self.assertEqual(package["engines"], {"node": ">=22"})
+        self.assertIn(".codex-plugin/", package["files"])
         self.assertNotIn("dependencies", package)
         self.assertEqual(distribution["schema"], "ars-noctis.distribution/v1")
         self.assertEqual(distribution["profiles"]["core"], ["ars", "noctis"])
@@ -88,6 +89,28 @@ class RepositoryContractTests(unittest.TestCase):
                 if item.get("checks")
             },
             {"ars", "noctis"},
+        )
+
+    def test_codex_plugin_is_a_thin_wrapper_over_existing_skills(self) -> None:
+        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        plugin = json.loads(
+            (ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(plugin["name"], package["name"])
+        self.assertEqual(plugin["version"], package["version"])
+        self.assertEqual(plugin["skills"], "./skills/")
+        self.assertEqual(plugin["interface"]["capabilities"], [])
+        self.assertTrue(plugin["interface"]["defaultPrompt"].strip())
+        self.assertNotIn("apps", plugin)
+        self.assertNotIn("mcpServers", plugin)
+        self.assertEqual(
+            {
+                path.name
+                for path in (ROOT / plugin["skills"]).iterdir()
+                if (path / "SKILL.md").is_file()
+            },
+            EXPECTED,
         )
 
     def test_node_doctor_has_no_skill_specific_branches(self) -> None:

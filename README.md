@@ -36,6 +36,12 @@ npx ars-noctis@latest list
 
 `init` 在真实 TTY 中且未传 `--profile`、`--skill`、`--json` 或 `--no-interactive` 时启动普通终端向导。向导可以选择已有 profile、逐项选择 Skills、修改项目内安装目录，并在写入前显示计划和请求确认；它不是全屏 TUI。CI、管道和其他 non-TTY 环境自动使用非交互模式。
 
+### Codex Plugin
+
+仓库根目录同时是一个原生 Codex Plugin：`.codex-plugin/plugin.json` 通过 `./skills/` 直接发现全部九个 Skill。Plugin 与 npm 包复用同一份 Skill 源文件，不生成副本，也不增加新的执行层。
+
+Plugin manifest 只承担 Codex 发现与分发元数据；它不解释 Ars Task、不调用 provider，也不读写 Noctis Run。当前 npm CLI 仍用于把指定 profile 或单个 Skill 安装进普通项目；通过 Codex marketplace 分发时，可以直接使用仓库根目录这一 Plugin artifact。
+
 ## 安装内容
 
 ### Profile
@@ -263,6 +269,7 @@ Git 跟踪的追加式 JSON + Git 是持久事实源；`.git/noctis/cache.sqlite
 ## 项目结构
 
 ```text
+.codex-plugin/           # Codex Plugin 发现与分发清单
 .github/workflows/       # PR/main CI 与最小权限 npm OIDC 发布流程
 bin/                     # ars-noctis CLI 入口
 lib/                     # 发行清单、安装事务与运行时诊断
