@@ -19,8 +19,11 @@ Ars-Noctis 发布一组可独立安装的 Agent Skills，以及一个协议无�
 在需要接入的项目根目录执行：
 
 ```powershell
-# 默认安装 core profile：ars + noctis
+# 在交互式终端中选择 profile、Skill 和安装目录；回车默认选择 core
 npx ars-noctis@latest init
+
+# Agent、脚本或 CI：非交互安装默认 core profile（ars + noctis）
+npx ars-noctis@latest init --no-interactive
 
 # 检查安装完整性和运行时
 npx ars-noctis@latest doctor
@@ -30,6 +33,8 @@ npx ars-noctis@latest list
 ```
 
 默认安装到 `.agents/skills/`。npm 包没有 `postinstall`：单纯执行 `npm install` 不会修改项目，也不会创建 Noctis Run、授权 requirement、提交或推送 Git。
+
+`init` 在真实 TTY 中且未传 `--profile`、`--skill`、`--json` 或 `--no-interactive` 时启动普通终端向导。向导可以选择已有 profile、逐项选择 Skills、修改项目内安装目录，并在写入前显示计划和请求确认；它不是全屏 TUI。CI、管道和其他 non-TTY 环境自动使用非交互模式。
 
 ## 安装内容
 
@@ -68,7 +73,7 @@ Codex App 中这五个 Skill 都只允许 `$skill-name` 显式调用，不会默
 
 | 命令 | 作用 |
 | --- | --- |
-| `init [path]` | 安装 profile 或一个/多个 Skill；默认使用 `core` |
+| `init [path]` | 交互选择或非交互安装 profile/Skills；默认选择 `core` |
 | `update [path]` | 用当前 CLI 包刷新已管理 Skill |
 | `doctor [path]` | 检查文件摘要、声明的运行时要求及 Skill 自检 |
 | `list [path]` | 列出 profile、可用 Skill 与安装状态 |
@@ -82,6 +87,7 @@ Codex App 中这五个 Skill 都只允许 `$skill-name` 显式调用，不会默
 | `--skills-dir <path>` | 指定项目内的相对安装目录 |
 | `--profile <name>` | 选择安装 profile |
 | `--skill <id>` | 选择 Skill，可重复传入 |
+| `--no-interactive` | 禁用 `init` 终端向导；未指定选择时安装默认 profile |
 | `--python <path>` | 指定 Python 可执行文件 |
 | `--dry-run` | 只报告计划，不写文件 |
 | `--replace-modified` | 备份后替换有本地修改的目标 |

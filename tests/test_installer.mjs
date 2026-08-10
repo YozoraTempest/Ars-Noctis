@@ -18,6 +18,11 @@ import { fileURLToPath } from 'node:url';
 import { loadDistribution, selectSkills } from '../lib/distribution.mjs';
 import { doctorInstallation } from '../lib/doctor.mjs';
 import {
+  DEFAULT_SKILLS_DIRECTORY,
+  promptInitOptions,
+  shouldRunInitWizard,
+} from '../lib/init-wizard.mjs';
+import {
   installSkills,
   installationSnapshot,
   readInstallRecord,
@@ -45,6 +50,21 @@ async function context(t) {
 
 function coreSkills() {
   return selectSkills(distribution, { profile: 'core' });
+}
+
+
+function scriptedWizard(answers) {
+  const pending = [...answers];
+  let output = '';
+  return {
+    question: async () => {
+      assert.notEqual(pending.length, 0, 'wizard requested more answers than expected');
+      return pending.shift();
+    },
+    write: (value) => { output += value; },
+    output: () => output,
+    remaining: () => pending,
+  };
 }
 
 function runCli(args) {
@@ -80,6 +100,95 @@ test('distribution exposes declarative profiles and independent skills', () => {
   assert.deepEqual(distribution.byId.get('noctis').requires.pythonModules, ['sqlite3']);
   assert.deepEqual(distribution.byId.get('verify').requires.executables, []);
   assert.deepEqual(distribution.byId.get('ars').checks.map((check) => check.id), ['manifest']);
+});
+
+test('init wizard runs only for an unconfigured human TTY', () => {
+  const tty = { isTTY: true };
+  const values = {
+    profile: undefined,
+    skill: [],
+    json: false,
+    'no-interactive': false,
+  };
+  assert.equal(shouldRunInitWizard(values, { input: tty, output: tty, env: {} }), true);
+  assert.equal(
+    shouldRunInitWizard({ ...values, profile: 'full' }, { input: tty, output: tty, env: {} }),
+    false,
+  );
+  assert.equal(
+    shouldRunInitWizard({ ...values, skill: ['verify'] }, { input: tty, output: tty, env: {} }),
+    false,
+  );
+  assert.equal(
+    shouldRunInitWizard({ ...values, json: true }, { input: tty, output: tty, env: {} }),
+    false,
+  );
+  assert.equal(
+    shouldRunInitWizard(
+      { ...values, 'no-interactive': true },
+      { input: tty, output: tty, env: {} },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldRunInitWizard(values, { input: tty, output: tty, env: { CI: 'true' } }),
+    false,
+  );
+  assert.equal(
+    shouldRunInitWizard(values, { input: { isTTY: false }, output: tty, env: {} }),
+    false,
+  );
+});
+
+test('init wizard selects profiles, destination, and confirmation', async () => {
+  const wizard = scriptedWizard(['2', '', '']);
+  const selection = await promptInitOptions({
+    distribution,
+    project: ROOT,
+    question: wizard.question,
+    write: wizard.write,
+  });
+  assert.equal(selection.canceled, false);
+  assert.equal(selection.profile, 'full');
+  assert.deepEqual(selection.skillIds, []);
+  assert.deepEqual(
+    selection.selectedSkillIds,
+    ['ars', 'noctis', 'implement', 'code-review', 'verify'],
+  );
+  assert.equal(selection.skillsDirectory, DEFAULT_SKILLS_DIRECTORY);
+  assert.match(wizard.output(), /Installation plan:/);
+  assert.deepEqual(wizard.remaining(), []);
+});
+
+test('init wizard supports custom Skills and an explicit project-relative directory', async () => {
+  const wizard = scriptedWizard(['custom', '3,verify,3', '.custom/skills', 'yes']);
+  const selection = await promptInitOptions({
+    distribution,
+    project: ROOT,
+    question: wizard.question,
+    write: wizard.write,
+  });
+  assert.equal(selection.canceled, false);
+  assert.equal(selection.profile, undefined);
+  assert.deepEqual(selection.skillIds, ['implement', 'verify']);
+  assert.equal(selection.skillsDirectory, '.custom/skills');
+  assert.deepEqual(wizard.remaining(), []);
+});
+
+test('init wizard honors an explicit directory and cancellation', async () => {
+  const wizard = scriptedWizard(['core', 'no']);
+  const selection = await promptInitOptions({
+    distribution,
+    project: ROOT,
+    skillsDirectory: '.codex/skills',
+    skillsDirectoryExplicit: true,
+    question: wizard.question,
+    write: wizard.write,
+  });
+  assert.equal(selection.canceled, true);
+  assert.equal(selection.profile, 'core');
+  assert.equal(selection.skillsDirectory, '.codex/skills');
+  assert.deepEqual(wizard.remaining(), []);
 });
 
 test('core init installs deterministic runtime payload and record', async (t) => {
@@ -446,6 +555,18 @@ test('CLI emits structured success and usage errors', async (t) => {
   );
   assert.equal(success.status, 0, success.stderr);
   assert.equal(JSON.parse(success.stdout).actions[0].skill, 'verify');
+
+  const defaultProject = await projectFor(t);
+  const nonInteractive = spawnSync(
+    process.execPath,
+    [BIN, 'init', defaultProject, '--no-interactive', '--json'],
+    { encoding: 'utf8' },
+  );
+  assert.equal(nonInteractive.status, 0, nonInteractive.stderr);
+  assert.deepEqual(
+    JSON.parse(nonInteractive.stdout).actions.map((action) => action.skill),
+    ['ars', 'noctis'],
+  );
 
   const failure = spawnSync(
     process.execPath,
