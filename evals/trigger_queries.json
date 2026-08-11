@@ -32,10 +32,10 @@
     {"id": "spec-review", "skill": "spec", "prompt": "只读审查当前 diff，找出能触发真实错误的问题。", "should_trigger": false},
     {"id": "spec-verify", "skill": "spec", "prompt": "在测试环境按既定场景验收退款流程并记录证据。", "should_trigger": false},
 
-    {"id": "design-from-spec", "skill": "design", "prompt": "根据 docs/specs/team-limits.md 设计技术方案，列出组件、接口、任务依赖和验证方式。", "should_trigger": true},
-    {"id": "design-direct", "skill": "design", "prompt": "需求已经明确，不用先写 PRD；直接设计缓存失效的数据流、错误路径和可独立验收的实现任务。", "should_trigger": true},
+    {"id": "design-from-spec", "skill": "design", "prompt": "根据 docs/specs/team-limits.md 设计技术方案，列出组件、接口、状态流、迁移约束和验证方式。", "should_trigger": true},
+    {"id": "design-direct", "skill": "design", "prompt": "需求已经明确，不用先写 PRD；直接设计缓存失效的数据流、错误路径和关键技术取舍。", "should_trigger": true},
     {"id": "design-migration", "skill": "design", "prompt": "为这个已确定的账号表升级需求形成兼容迁移、回滚和分阶段实施设计。", "should_trigger": true},
-    {"id": "design-task-dag", "skill": "design", "prompt": "把这份明确需求拆成有依赖关系的任务，每项写清涉及模块、输入输出接口、验收条件和测试方法。", "should_trigger": true},
+    {"id": "design-task-dag", "skill": "design", "prompt": "把这份明确需求拆成有依赖关系的任务，每项写清涉及模块、输入输出接口、验收条件和测试方法。", "should_trigger": false},
     {"id": "design-spec", "skill": "design", "prompt": "我只有一个模糊想法，请一次问我一个问题，先明确用户、范围和验收条件并形成需求文档。", "should_trigger": false},
     {"id": "design-implement", "skill": "design", "prompt": "修改数据库适配器并把所有测试跑通。", "should_trigger": false},
     {"id": "design-review", "skill": "design", "prompt": "审查提交 4d1e... 的兼容性风险，不要修改文件。", "should_trigger": false},

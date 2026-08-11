@@ -1,27 +1,30 @@
 ---
 name: implement
-description: 在软件仓库中实现已明确范围的代码、配置或迁移变更，并运行与风险相称的本地检查。用户要求修复、实现、重构或应用已接受的审查意见时使用；不要用于只读诊断、代码审查、独立行为验收、发布或未经请求的提交。
+description: 在软件仓库中完成明确范围的代码、配置或迁移变更，并运行相称的本地检查。用户要求实现、修复或重构时使用；不要用于只读诊断、代码审查、独立验收或发布。
 ---
 
 # Implement
 
-## 执行
+交付当前任务要求的最小完整变更，让仓库事实指导实现细节。
 
-1. 阅读适用规则、目标代码和已有测试，确认授权范围、兼容边界和当前工作树。保留与任务无关的用户修改。
-2. 在信息足够时直接实施；只有缺失选择会实质改变行为、范围或风险时才请求用户决定。
-3. 采用仓库现有模式完成最小完整修改。允许根据代码库选择设计、工具、并行调查和局部抽象，不执行无关重构。
-4. 运行与变更风险相称的格式化、静态检查和测试。测试属于实现质量的一部分；不要把“验收”与普通回归检查混为一谈。
-5. 报告实际改动、验证结果和残余风险。未经明确授权不提交、不推送、不部署，也不修改外部系统。
+## 方向
 
-## Noctis 调用
+- 阅读适用规则、相关代码和已有测试，沿用仓库模式并保护无关用户修改。
+- 在 Task 边界内自主选择设计、工具和实现步骤；避免无关重构和提前抽象。
+- 运行与变更风险相称的检查，优先快速、相关的反馈，再按实际影响扩大范围。
 
-收到 `ars.task/v1` 时：
+## 边界
 
-- 只接受 provider `implement`、capability `code.change` 的 Task；以 envelope 的 workspace、instructions、inputs、acceptance 和 effects 为边界。
-- `effects.granted` 只对当前 Task 有效，不扩大到其他仓库或外部目标。没有列出的副作用立即阻塞。
-- 使用稳定 `idempotency_key` 关联可能重复的外部或提交操作；恢复时先核对当前事实，不盲目重放。
-- 返回 `ars.result/v1`，用 Artifact 表达可组合产物，用 evidence 表达验证证据，用 effect receipt 记录实际副作用。不要直接修改 Noctis 数据库或其他 Skill 的私有文件。
+- 不扩大需求或替调用方编排后续工作。
+- 不自行调用其他 provider，不创建、扩展、重试或完成 Noctis Task。
+- 写入、提交、推送、部署或外部修改只在当前授权范围内执行。
 
-解析 Task 或构造 Result 前读取 [references/ars-envelope.md](references/ars-envelope.md)，严格复制关联字段并只返回契约允许的字段。
+## 工具
 
-独立调用时直接向用户交付结果，不创建 Noctis 状态。
+优先使用仓库原生的搜索、构建、格式化、静态检查和测试工具；需要外部知识时使用对应依赖的官方资料。
+
+## Ars
+
+收到 `ars.task/v1` 时只接受 provider `implement`、capability `code.change`。Task envelope 是完整边界；返回 `ars.result/v1`，用 Artifact 表达产物、evidence 表达实际检查、effect receipt 表达已发生副作用。
+
+解析或返回 envelope 时读取 [references/ars-envelope.md](references/ars-envelope.md)。

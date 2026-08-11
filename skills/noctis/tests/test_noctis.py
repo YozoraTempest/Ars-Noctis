@@ -6,6 +6,7 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
@@ -184,6 +185,56 @@ class NoctisRuntimeTests(GitRepositoryTestCase):
         bad_digest["executors"][0]["digest"] = "sha256:" + "0" * 64
         with self.assertRaisesRegex(contracts.NoctisError, "does not match"):
             contracts.validate_plan(bad_digest)
+
+    def test_plan_preview_omits_opaque_requests_and_executor_snapshots(self) -> None:
+        plan = self.plan([self.task("first", requirements=["command.execute"])])
+        plan["tasks"][0]["request"] = {"operation": "opaque"}
+        preview = runtime.plan_preview(contracts.validate_plan(plan))
+
+        self.assertEqual(
+            preview,
+            {
+                "title": "Protocol-neutral test",
+                "objective": "Exercise durable task graph behavior.",
+                "tasks": [
+                    {
+                        "id": "first",
+                        "needs": [],
+                        "executor": "local:worker:1",
+                    }
+                ],
+                "requirements": ["command.execute"],
+            },
+        )
+
+    def test_committed_checkpoint_guard_skips_display_metadata(self) -> None:
+        run_id = self.create([self.task("first")])
+        head = self.checkpoint()
+
+        with mock.patch.object(
+            runtime,
+            "git_branch",
+            side_effect=AssertionError("display metadata must not be queried"),
+        ):
+            checkpoint, _ = runtime.require_committed_checkpoint(
+                self.project, run_id
+            )
+
+        self.assertEqual(checkpoint["commit"], head)
+        self.assertTrue(checkpoint["committed"])
+
+    def test_claim_reuses_verified_base_seal(self) -> None:
+        run_id = self.create([self.task("first")])
+        self.checkpoint()
+
+        with mock.patch.object(
+            runtime,
+            "verify_base_seal",
+            wraps=runtime.verify_base_seal,
+        ) as verify:
+            runtime.claim_task(self.project, run_id, "first")
+
+        self.assertEqual(verify.call_count, 1)
 
     def test_cli_completes_a_task_with_opaque_output(self) -> None:
         plan_path = self.write_json("cli-plan.json", self.plan([self.task("first")]))

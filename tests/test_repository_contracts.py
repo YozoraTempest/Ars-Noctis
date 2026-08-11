@@ -151,8 +151,9 @@ class RepositoryContractTests(unittest.TestCase):
         manifest = json.loads(
             (SKILLS / "diagnose" / "ars.json").read_text(encoding="utf-8")
         )
-        self.assertIn("独立调用时直接交付诊断结论", instructions)
-        self.assertIn("Task 可以没有前置 Artifact", instructions)
+        self.assertIn("默认只读", instructions)
+        self.assertIn("Task envelope 是完整边界", instructions)
+        self.assertIn("不调用其他 provider", instructions)
         self.assertNotIn("调用 Implement", instructions)
         self.assertNotIn("进入下一阶段", instructions)
         self.assertEqual(
@@ -160,14 +161,21 @@ class RepositoryContractTests(unittest.TestCase):
             ["software.diagnose"],
         )
 
-    def test_large_entrypoints_defer_only_optional_detail(self) -> None:
+    def test_skill_entrypoints_keep_optional_detail_out_of_the_default_path(self) -> None:
         ars = (SKILLS / "ars" / "SKILL.md").read_text(encoding="utf-8")
-        testing = (SKILLS / "test" / "SKILL.md").read_text(encoding="utf-8")
-        diagnose = (SKILLS / "diagnose" / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("references/noctis-adapter.md", ars)
-        self.assertIn("references/behavior-contract.md", testing)
-        self.assertIn("竞争假设", diagnose)
-        self.assertIn("hypotheses-tested", diagnose)
+        for reference in (
+            "references/noctis-adapter.md",
+            "references/noctis-runtime.md",
+            "references/noctis-advanced.md",
+        ):
+            self.assertIn(reference, ars)
+
+        for name in EXPECTED - {"ars", "noctis"}:
+            with self.subTest(skill=name):
+                instructions = (SKILLS / name / "SKILL.md").read_text(
+                    encoding="utf-8"
+                )
+                self.assertLessEqual(len(instructions.splitlines()), 40)
 
     def test_every_manifest_validates_through_public_cli(self) -> None:
         for name in EXPECTED - {"noctis"}:
@@ -230,7 +238,9 @@ class RepositoryContractTests(unittest.TestCase):
         operations = (SKILLS / "noctis" / "references" / "operations.md").read_text(
             encoding="utf-8"
         )
-        self.assertIn(".noctis/runs/<run-id>/", instructions)
+        self.assertIn("references/contracts.md", instructions)
+        self.assertIn("references/operations.md", instructions)
+        self.assertIn(".noctis/runs/<run-id>/", contracts + operations)
         self.assertIn("noctis.extension/v1", contracts)
         self.assertIn("expected-run-revision", operations)
         self.assertIn("noctis/cache.sqlite3", operations)

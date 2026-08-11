@@ -1,28 +1,30 @@
 ---
 name: code-review
-description: 对指定提交、差异或变更集执行只读代码审查，优先发现可证明的正确性、安全、兼容性和回归问题。用户要求 review、审查 PR/diff/commit 或复核修复时使用；不要用于实现修复、运行完整行为验收或泛化代码讲解。
+description: 对明确提交、差异或变更集执行只读审查，报告可证明的正确性、安全、兼容性和回归问题。用户要求 review、审查 PR、diff 或 commit 时使用；不要用于实现修复或运行完整行为验收。
 ---
 
 # Code Review
 
-## 执行
+审查精确变更，只让有证据、会影响工程判断的问题进入报告。
 
-1. 精确确定审查基线、目标 revision 和文件范围；范围不明确且会改变结论时先说明假设或请求澄清。
-2. 阅读适用规则、变更上下文、调用方和相关测试。只做与判断有关的只读检查。
-3. 只报告能由代码、配置、测试或运行结果支持的问题。按严重性排序，每项给出文件、行号、触发场景、实际影响和最小修复方向。
-4. 区分确定缺陷、契约风险和测试缺口。多个表现来自同一根因时合并，不用风格偏好填充报告。
-5. 未发现问题时明确说明，并列出尚未实际验证的范围。除非用户另行要求修复，否则不修改文件、不提交、不推送。
+## 方向
 
-## Noctis 调用
+- 固定基线、目标 revision 和范围，阅读相关调用方、契约与测试。
+- Findings 优先并按严重性排序；每项说明位置、触发条件、证据、影响和可执行修复方向。
+- 合并同一根因，区分确定缺陷、风险和测试缺口；无发现时说明未验证范围。
 
-收到 `ars.task/v1` 时，只接受 provider `code-review`、capability `code.review` 的 Task。优先审查 inputs 中由直接前置 Task 产生的 Artifact，不从工作树或聊天历史猜测变更范围。
+## 边界
 
-返回 `ars.result/v1`：
+- 保持只读，不顺手修复，不把风格偏好或工具已经稳定检查的内容写成问题。
+- 不替 Verify 执行完整验收，不替 Noctis 决定返工或后续 Task。
+- 范围或基线缺失且会改变结论时请求输入。
 
-- 用 inline 或 workspace Artifact 返回结构化 findings；稳定字段至少包含 `severity`、`category`、`location`、`evidence`、`impact` 和 `remediation`。
-- 以 evidence 记录实际检查的 revision、命令或报告。
-- 工具不可用或 revision 不可达时返回 `blocked`，不要把未执行检查描述为通过。
+## 工具
 
-解析 Task 或构造 Result 前读取 [references/ars-envelope.md](references/ars-envelope.md)，严格复制关联字段并只返回契约允许的字段。
+使用 Git diff/show/log/blame、仓库搜索、静态分析和必要的定向测试。工具用于证明或证伪 finding，不追求固定检查清单。
 
-不要直接修改业务代码、Noctis 数据库或其他 Skill 的记录。
+## Ars
+
+收到 `ars.task/v1` 时只接受 provider `code-review`、capability `code.review`。Task envelope 是完整边界；返回 `ars.result/v1`、结构化 findings Artifact 和实际检查证据。只执行当前 Task，不创建或推进 Noctis，也不调用其他 provider。
+
+解析或返回 envelope 时读取 [references/ars-envelope.md](references/ars-envelope.md)。

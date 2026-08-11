@@ -163,46 +163,48 @@ def cache_connect(project: Path, *, create: bool) -> sqlite3.Connection | None:
     connection = sqlite3.connect(path, timeout=5)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA busy_timeout = 5000")
-    connection.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS claims (
-            run_id TEXT NOT NULL,
-            task_id TEXT NOT NULL,
-            claim_id TEXT NOT NULL UNIQUE,
-            attempt INTEGER NOT NULL,
-            base_revision INTEGER NOT NULL,
-            checkpoint_commit TEXT NOT NULL,
-            started_at TEXT NOT NULL,
-            PRIMARY KEY (run_id, task_id)
-        );
-        CREATE TABLE IF NOT EXISTS authorizations (
-            run_id TEXT NOT NULL,
-            requirement TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            authorized_at TEXT NOT NULL,
-            PRIMARY KEY (run_id, requirement)
-        );
-        """
-    )
-    current = connection.execute(
-        "SELECT value FROM meta WHERE key = 'schema_version'"
-    ).fetchone()
-    if current is None:
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS claims (
+                run_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                claim_id TEXT NOT NULL UNIQUE,
+                attempt INTEGER NOT NULL,
+                base_revision INTEGER NOT NULL,
+                checkpoint_commit TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                PRIMARY KEY (run_id, task_id)
+            );
+            CREATE TABLE IF NOT EXISTS authorizations (
+                run_id TEXT NOT NULL,
+                requirement TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                authorized_at TEXT NOT NULL,
+                PRIMARY KEY (run_id, requirement)
+            );
+            """
+        )
         connection.execute(
-            "INSERT INTO meta(key, value) VALUES('schema_version', ?)",
+            "INSERT OR IGNORE INTO meta(key, value) VALUES('schema_version', ?)",
             (str(CACHE_SCHEMA_VERSION),),
         )
         connection.commit()
-    elif current["value"] != str(CACHE_SCHEMA_VERSION):
-        actual = current["value"]
+        current = connection.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if current is None or current["value"] != str(CACHE_SCHEMA_VERSION):
+            actual = None if current is None else current["value"]
+            raise NoctisError(
+                f"unsupported local cache schema {actual}; remove the local cache while no Noctis command is running"
+            )
+    except Exception:
         connection.close()
-        raise NoctisError(
-            f"unsupported local cache schema {actual}; remove the local cache while no Noctis command is running"
-        )
+        raise
     return connection
 
 
@@ -563,13 +565,19 @@ def verify_base_seal(project: Path, directory: Path) -> dict[str, Any]:
     return {"sealed": True, "commit": run_commit}
 
 
-def load_run_state(project: Path, run_id: str) -> dict[str, Any]:
+def load_run_state(
+    project: Path,
+    run_id: str,
+    *,
+    seal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     project = project.resolve()
     directory = run_directory(project, run_id)
     record = validate_run_record(load_json(directory / "run.json"), run_id)
     if not git_commit_exists(project, record["created_from"]):
         raise NoctisError("run.created_from is not reachable in the current clone")
-    seal = verify_base_seal(project, directory)
+    if seal is None:
+        seal = verify_base_seal(project, directory)
     plan = validate_plan(load_json(directory / record["plan"]))
     executors = list(plan["executors"])
     tasks: dict[str, dict[str, Any]] = {
@@ -678,7 +686,9 @@ def apply_local_claims(
     return result
 
 
-def checkpoint_info(project: Path, run_id: str) -> dict[str, Any]:
+def _checkpoint_guard_info(
+    project: Path, run_id: str
+) -> tuple[Path, dict[str, Any]]:
     project = project.resolve()
     repo = git_repository(project)
     directory = run_directory(project, run_id)
@@ -689,6 +699,16 @@ def checkpoint_info(project: Path, run_id: str) -> dict[str, Any]:
     ).stdout.splitlines()
     tracked = all(_tracked(repo, directory / name) for name in ("run.json", "plan.json"))
     head = git_head(repo)
+    return repo, {
+        "commit": head,
+        "committed": tracked and not changes,
+        "changes": changes,
+    }
+
+
+def checkpoint_info(project: Path, run_id: str) -> dict[str, Any]:
+    repo, checkpoint = _checkpoint_guard_info(project, run_id)
+    head = checkpoint["commit"]
     branch = git_branch(repo)
     upstream_result = run_git(
         repo,
@@ -700,23 +720,25 @@ def checkpoint_info(project: Path, run_id: str) -> dict[str, Any]:
     if upstream is not None:
         pushed = git_is_ancestor(repo, head, upstream)
     return {
-        "commit": head,
+        "commit": checkpoint["commit"],
         "branch": branch,
         "upstream": upstream,
-        "committed": tracked and not changes,
+        "committed": checkpoint["committed"],
         "pushed": pushed,
-        "changes": changes,
+        "changes": checkpoint["changes"],
     }
 
 
-def require_committed_checkpoint(project: Path, run_id: str) -> dict[str, Any]:
-    checkpoint = checkpoint_info(project, run_id)
+def require_committed_checkpoint(
+    project: Path, run_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    _, checkpoint = _checkpoint_guard_info(project, run_id)
     if not checkpoint["committed"]:
         raise NoctisError(
             "Noctis Run state is not committed; commit the JSON checkpoint before continuing"
         )
-    verify_base_seal(project, run_directory(project, run_id))
-    return checkpoint
+    seal = verify_base_seal(project, run_directory(project, run_id))
+    return checkpoint, seal
 
 
 def create_run(
@@ -898,8 +920,14 @@ def recover(project: Path, run_id: str | None) -> dict[str, Any]:
         }
 
 
-def check_extension_value(project: Path, run_id: str, value: Any) -> dict[str, Any]:
-    state = load_run_state(project.resolve(), run_id)
+def check_extension_value(
+    project: Path,
+    run_id: str,
+    value: Any,
+    *,
+    seal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    state = load_run_state(project.resolve(), run_id, seal=seal)
     extension = validate_extension(
         value, state["executors"], state["tasks"]
     )
@@ -944,9 +972,9 @@ def extend_run_value(
     expected_run_revision: int,
 ) -> dict[str, Any]:
     project = project.resolve()
-    require_committed_checkpoint(project, run_id)
+    _, seal = require_committed_checkpoint(project, run_id)
     with mutation_transaction(project):
-        checked = check_extension_value(project, run_id, value)
+        checked = check_extension_value(project, run_id, value, seal=seal)
         if checked["run_revision"] != expected_run_revision:
             raise NoctisError(
                 f"Run revision conflict: expected {expected_run_revision}, actual {checked['run_revision']}"
@@ -959,7 +987,7 @@ def extend_run_value(
             {"extension": checked["extension"]},
         )
         path = append_event(project, event)
-        refreshed = load_run_state(project, run_id)
+        refreshed = load_run_state(project, run_id, seal=seal)
         return {
             "ok": True,
             "run_id": run_id,
@@ -1014,9 +1042,9 @@ def add_task(
 
 def claim_task(project: Path, run_id: str, requested_task: str | None) -> dict[str, Any]:
     project = project.resolve()
-    checkpoint = require_committed_checkpoint(project, run_id)
+    checkpoint, seal = require_committed_checkpoint(project, run_id)
     with mutation_transaction(project) as connection:
-        state = load_run_state(project, run_id)
+        state = load_run_state(project, run_id, seal=seal)
         visible_tasks = apply_local_claims(
             project, run_id, state["tasks"], connection
         )
@@ -1101,9 +1129,9 @@ def finish_task(
     result_path: Path,
 ) -> dict[str, Any]:
     project = project.resolve()
-    require_committed_checkpoint(project, run_id)
+    _, seal = require_committed_checkpoint(project, run_id)
     with mutation_transaction(project) as connection:
-        state = load_run_state(project, run_id)
+        state = load_run_state(project, run_id, seal=seal)
         task = next((item for item in state["tasks"] if item["id"] == task_id), None)
         if task is None:
             raise NoctisError(f"task does not exist: {task_id}")
@@ -1145,7 +1173,7 @@ def finish_task(
         )
         event_path = append_event(project, event)
         _delete_local_claim(connection, run_id, task_id)
-        refreshed = load_run_state(project, run_id)
+        refreshed = load_run_state(project, run_id, seal=seal)
         return {
             "ok": True,
             "run_id": run_id,
@@ -1171,9 +1199,9 @@ def retry_task(
     acknowledge_requirements: bool,
 ) -> dict[str, Any]:
     project = project.resolve()
-    require_committed_checkpoint(project, run_id)
+    _, seal = require_committed_checkpoint(project, run_id)
     with mutation_transaction(project) as connection:
-        state = load_run_state(project, run_id)
+        state = load_run_state(project, run_id, seal=seal)
         task = next((item for item in state["tasks"] if item["id"] == task_id), None)
         if task is None:
             raise NoctisError(f"task does not exist: {task_id}")
@@ -1229,9 +1257,9 @@ def cancel_task(
     acknowledge_requirements: bool,
 ) -> dict[str, Any]:
     project = project.resolve()
-    require_committed_checkpoint(project, run_id)
+    _, seal = require_committed_checkpoint(project, run_id)
     with mutation_transaction(project) as connection:
-        state = load_run_state(project, run_id)
+        state = load_run_state(project, run_id, seal=seal)
         task = next((item for item in state["tasks"] if item["id"] == task_id), None)
         if task is None:
             raise NoctisError(f"task does not exist: {task_id}")
@@ -1300,10 +1328,10 @@ def grant_requirements(
     project: Path, run_id: str, requirements: list[str], reason: str
 ) -> dict[str, Any]:
     project = project.resolve()
-    require_committed_checkpoint(project, run_id)
+    _, seal = require_committed_checkpoint(project, run_id)
     normalized = sorted(set(identifier(item, "requirement") for item in requirements))
     with mutation_transaction(project) as connection:
-        state = load_run_state(project, run_id)
+        state = load_run_state(project, run_id, seal=seal)
         requested = {
             requirement
             for task in state["tasks"]
@@ -1342,10 +1370,10 @@ def revoke_requirements(
     project: Path, run_id: str, requirements: list[str], reason: str
 ) -> dict[str, Any]:
     project = project.resolve()
-    require_committed_checkpoint(project, run_id)
+    _, seal = require_committed_checkpoint(project, run_id)
     normalized = sorted(set(identifier(item, "requirement") for item in requirements))
     with mutation_transaction(project) as connection:
-        state = load_run_state(project, run_id)
+        state = load_run_state(project, run_id, seal=seal)
         event = new_event(
             run_id,
             None,
@@ -1365,6 +1393,28 @@ def revoke_requirements(
         }
 
 
+def plan_preview(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": plan["title"],
+        "objective": plan["objective"],
+        "tasks": [
+            {
+                "id": task["id"],
+                "needs": task["needs"],
+                "executor": task["executor"],
+            }
+            for task in plan["tasks"]
+        ],
+        "requirements": sorted(
+            {
+                requirement
+                for task in plan["tasks"]
+                for requirement in task["requirements"]
+            }
+        ),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Protocol-neutral Git-backed durable task graph runtime."
@@ -1373,6 +1423,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     check = commands.add_parser("plan-check")
     check.add_argument("--plan", type=Path, required=True)
+    check.add_argument(
+        "--preview",
+        action="store_true",
+        help="include a compact preview without opaque requests or executor snapshots",
+    )
 
     create = commands.add_parser("run-create")
     create.add_argument("--project", type=Path, required=True)
@@ -1468,6 +1523,8 @@ def main() -> int:
                 "executors": len(plan["executors"]),
                 "tasks": len(plan["tasks"]),
             }
+            if args.preview:
+                result["preview"] = plan_preview(plan)
         elif args.command == "run-create":
             result = create_run(args.project, args.plan, args.grant, args.grant_reason)
         elif args.command == "run-show":

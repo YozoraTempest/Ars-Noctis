@@ -1,7 +1,7 @@
 {
   "schema": "ars.skill/v1",
   "id": "diagnose",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "capabilities": [
     {
       "id": "software.diagnose",

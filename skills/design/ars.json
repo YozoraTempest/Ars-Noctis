@@ -1,11 +1,11 @@
 {
   "schema": "ars.skill/v1",
   "id": "design",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "capabilities": [
     {
       "id": "solution.design",
-      "description": "Turn explicit requirements into a repository-aware technical design and independently verifiable task plan.",
+      "description": "Turn explicit requirements into a repository-aware technical design and implementation boundary.",
       "accepts": "ars.task/v1",
       "returns": "ars.result/v1",
       "effects": [

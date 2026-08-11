@@ -22,7 +22,8 @@ description: 创建、迁移、检查或验证带 ars.json 能力清单的 Agent
 - 创建前展示每个 Task 的最终 provider、`single/multi`、模型和推理强度绑定；创建或完成后由调用方提交 Noctis 返回的 checkpoint。
 - `next` 只向 Agent 返回 `ars.app-dispatch/v1`。`ready/single` 要求 provider 已由用户在当前任务显式选择；`ready/multi` 严格使用 `spawn` 参数；`blocked` 不得静默换模或降级。
 - Adapter 校验 provider、capability、effect、workspace、Artifact 和 Git receipt；Noctis 只保存公共 JSON，不解释 Ars 语义或调用模型。
-- 动态 Extension、低层 Claim/Result 操作和旧 `.ars/runs` 迁移只按引用文档执行，不自动探测或改写历史。
+- 需要配置 profile、模型、推理强度或 Agent 模式时再读取 [references/noctis-runtime.md](references/noctis-runtime.md)。
+- 动态 Extension、低层 Claim/Result 操作或旧 `.ars/runs` 迁移时再读取 [references/noctis-advanced.md](references/noctis-advanced.md)，不自动探测或改写历史。
 
 ## 契约边界
 
@@ -32,4 +33,4 @@ description: 创建、迁移、检查或验证带 ars.json 能力清单的 Agent
 - 不在 manifest 中声明模板、内部状态文件、脚本路径或其他 Skill 的安装路径。
 - 不为只需独立调用、没有组合需求的 Skill 强行增加 Ars manifest。
 
-运行命令与完整字段见 `scripts/ars.py --help` 和 `scripts/ars_host.py --help`。需要编写或审查 manifest 时读取 [references/manifest.md](references/manifest.md)；需要让 provider 收发 Ars envelope 时读取 [references/provider-envelope.md](references/provider-envelope.md)；需要连接 Noctis、配置 Codex App runtime 或迁移旧 Run 时读取 [references/noctis-adapter.md](references/noctis-adapter.md)。
+运行命令与完整字段见 `scripts/ars.py --help` 和 `scripts/ars_host.py --help`。需要编写或审查 manifest 时读取 [references/manifest.md](references/manifest.md)；需要让 provider 收发 Ars envelope 时读取 [references/provider-envelope.md](references/provider-envelope.md)。

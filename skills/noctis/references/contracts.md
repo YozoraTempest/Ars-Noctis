@@ -133,7 +133,7 @@ Extension 通过 `run.tasks-added` 事件持久化，使用独立的 Run revisio
 }
 ```
 
-`status` 只能是 `completed`、`failed`、`blocked` 或 `input-required`。`output` 是任意严格 JSON，包括 `null`。run、Task、claim、attempt 必须与本机 Claim 一致。Result 文件不可覆盖；对应 Event ID 等于 claim ID，Event 类型必须和 Result 状态一致。
+`status` 只能是 `completed`、`failed`、`blocked` 或 `input-required`。`output` 是任意严格 JSON，包括 `null`；大型或二进制产物应只返回稳定引用、摘要和必要 digest。run、Task、claim、attempt 必须与本机 Claim 一致。Result 文件不可覆盖；对应 Event ID 等于 claim ID，Event 类型必须和 Result 状态一致。
 
 ## Run and Event
 

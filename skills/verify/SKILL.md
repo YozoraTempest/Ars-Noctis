@@ -1,28 +1,30 @@
 ---
 name: verify
-description: 按明确场景执行可观察的行为验收、集成检查或证据采集，并给出 passed、failed 或 blocked 判定。用户要求验证真实行为、验收流程、运行集成场景或人工协同检查时使用；不要用于编写实现、静态代码审查或仅补单元测试。
+description: 按明确标准执行可观察的行为验收、集成检查或证据采集，并给出判定。用户要求验证真实行为、环境或流程时使用；不要用于编写实现、静态代码审查或设计测试策略。
 ---
 
 # Verify
 
-## 执行
+在指定环境中执行指定场景，让实际观察决定结论。
 
-1. 把需求转成可观察场景：前置条件、操作、预期结果、判定主体和证据。缺少关键期望时先确认，不自行发明业务规则。
-2. 选择最小充分模式：`human` 由用户操作并判定；`ai` 由当前 Agent 使用已授权工具操作并判定；`assisted` 由 Agent 准备环境或证据、用户最终判定。
-3. 在执行前确认目标环境、账号、数据范围和可能副作用。登录状态或工具可用不等于授权；生产、批量、不可逆或外部写入必须另行明确授权。
-4. 执行每个场景并记录实际观察。工具不可用、环境不稳定或证据不足时判定 blocked，不静默降级，也不把“页面可打开”当作功能通过。
-5. 汇总 passed、failed、blocked 和未执行项。默认不修改业务代码；修复失败另交 Implement。
+## 方向
 
-## Noctis 调用
+- 将给定验收条件落实为可观察的前置条件、操作、结果和证据。
+- 选择足以验证场景的工具和最小执行范围，记录实际行为而非预期推断。
+- 对必要场景给出 `passed`、`failed`、`blocked` 或需要用户判断的结论，并说明未覆盖范围。
 
-收到 `ars.task/v1` 时，只接受 provider `verify`、capability `behavior.verify` 的 Task。使用 inputs 中的实现产物、审查发现或场景，不读取其他 Skill 私有状态。
+## 边界
 
-返回 `ars.result/v1`：
+- 不发明验收标准，不因工具可用而扩大账号、数据、系统或外部副作用范围。
+- 不修改业务实现；发现失败后把事实交还调用方，由 Noctis 决定后续流程。
+- 不默认重复 build、完整测试或打包；Task 要求和目标风险决定执行范围。
 
-- Artifact 提供结构化场景结果；evidence 只引用实际存在的文件、完整 commit、HTTP(S) URI 或 inline 观察。
-- effect receipt 只记录实际发生且 Task 已授权的命令、workspace 写入或网络写入。
-- 任一必要场景失败时返回 `failed`；需要用户判定时返回 `input-required`；环境或权限缺失时返回 `blocked`。
+## 工具
 
-解析 Task 或构造 Result 前读取 [references/ars-envelope.md](references/ars-envelope.md)，严格复制关联字段并只返回契约允许的字段。
+按场景使用 CLI、测试运行器、API、浏览器、桌面控制、日志或人工协作。优先使用隔离、可恢复的数据和环境。
 
-独立调用时直接报告验收结果，不创建 Noctis 状态、不提交证据、不推送或部署。
+## Ars
+
+收到 `ars.task/v1` 时只接受 provider `verify`、capability `behavior.verify`。Task envelope 是完整边界；返回 `ars.result/v1`、场景结果 Artifact、实际证据和必要的 effect receipt。只执行当前 Task，不创建或推进 Noctis，也不调用其他 provider。
+
+解析或返回 envelope 时读取 [references/ars-envelope.md](references/ars-envelope.md)。

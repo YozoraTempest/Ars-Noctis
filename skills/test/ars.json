@@ -1,11 +1,11 @@
 {
   "schema": "ars.skill/v1",
   "id": "test",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "capabilities": [
     {
       "id": "software.test",
-      "description": "Design, author, and execute minimum sufficient software tests with a unit-test-first, risk-driven method.",
+      "description": "Design, author, or execute minimum sufficient software tests for an explicit risk.",
       "accepts": "ars.task/v1",
       "returns": "ars.result/v1",
       "effects": [
