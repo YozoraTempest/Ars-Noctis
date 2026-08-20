@@ -1,7 +1,0 @@
-interface:
-  display_name: "Verify"
-  short_description: "按既定标准执行真实行为验收并返回带证据判定的个人工程 Skill"
-  default_prompt: "使用 $verify 按既定场景执行行为验收并记录证据。"
-
-policy:
-  allow_implicit_invocation: false

@@ -1,7 +1,0 @@
-interface:
-  display_name: "Design"
-  short_description: "为明确需求给出仓库感知的技术设计与关键取舍的个人工程 Skill"
-  default_prompt: "使用 $design 为这项明确需求形成技术设计。"
-
-policy:
-  allow_implicit_invocation: false

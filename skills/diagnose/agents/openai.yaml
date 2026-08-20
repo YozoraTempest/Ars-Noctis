@@ -1,7 +1,0 @@
-interface:
-  display_name: "Diagnose"
-  short_description: "复现并定位软件异常，交付有证据只读诊断结论的个人工程 Skill"
-  default_prompt: "使用 $diagnose 调查这个软件异常并交付诊断证据。"
-
-policy:
-  allow_implicit_invocation: false

@@ -1,7 +1,0 @@
-interface:
-  display_name: "Spec"
-  short_description: "澄清产品或工程需求并形成边界清楚、可验收规格的个人工程 Skill"
-  default_prompt: "使用 $spec 澄清这项需求并形成可验收的规格。"
-
-policy:
-  allow_implicit_invocation: false

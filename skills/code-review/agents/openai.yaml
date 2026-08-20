@@ -1,7 +1,0 @@
-interface:
-  display_name: "Code Review"
-  short_description: "只读审查明确变更并报告有证据高价值工程问题的个人工程 Skill"
-  default_prompt: "使用 $code-review 审查这个明确变更并报告有证据的问题。"
-
-policy:
-  allow_implicit_invocation: false
