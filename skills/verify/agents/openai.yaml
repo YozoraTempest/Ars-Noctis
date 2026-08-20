@@ -1,7 +1,7 @@
 interface:
   display_name: "Verify"
-  short_description: "执行可观察的行为验收或集成场景，并返回带实际证据的明确判定"
-  default_prompt: "使用 $verify 按这些场景执行行为验收并记录证据。"
+  short_description: "按既定标准执行真实行为验收并返回带证据判定的个人工程 Skill"
+  default_prompt: "使用 $verify 按既定场景执行行为验收并记录证据。"
 
 policy:
   allow_implicit_invocation: false

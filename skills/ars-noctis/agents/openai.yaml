@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ars-Noctis Router"
+  short_description: "在七个独立工程 Skill 之间选择并组合最小执行路径"
+  default_prompt: "使用 $ars-noctis 为这项跨能力软件工程请求选择并执行适用的原子 Skill。"
+
+policy:
+  allow_implicit_invocation: false

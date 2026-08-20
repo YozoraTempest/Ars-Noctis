@@ -1,7 +1,7 @@
 interface:
   display_name: "Test"
-  short_description: "围绕明确风险设计、编写或执行最小充分测试"
-  default_prompt: "使用 $test 为这项软件风险产出最小充分测试证据。"
+  short_description: "围绕明确软件风险设计、补充或执行最小充分测试的个人工程 Skill"
+  default_prompt: "使用 $test 为这项软件风险提供最小充分测试证据。"
 
 policy:
   allow_implicit_invocation: false

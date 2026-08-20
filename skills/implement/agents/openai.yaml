@@ -1,7 +1,7 @@
 interface:
   display_name: "Implement"
-  short_description: "实现明确范围的仓库代码或配置变更，并运行与风险相称的本地检查"
-  default_prompt: "使用 $implement 完成这个仓库变更并运行相称的本地检查。"
+  short_description: "完成明确范围的仓库代码或配置变更并运行相关检查的个人工程 Skill"
+  default_prompt: "使用 $implement 完成这个仓库变更并运行相关检查。"
 
 policy:
   allow_implicit_invocation: false
